@@ -14,7 +14,7 @@
    ============================================================ */
 import { Router } from 'express';
 import { admin } from '../lib/supabase.js';
-import { env } from '../config/env.js';
+import { payheroCallbackSecret } from '../config/env.js';
 import * as paystack from '../services/paystack.js';
 import * as payhero from '../services/payhero.js';
 import { reconcile } from './deposits.routes.js';
@@ -70,7 +70,7 @@ router.post('/paystack', async (req, res) => {
    its callbacks. The body is never trusted for status or amount — it
    only tells us which payment to go and ask about. */
 router.post('/payhero/:secret', async (req, res) => {
-  if (req.params.secret !== env.PAYHERO_CALLBACK_SECRET) {
+  if (req.params.secret !== payheroCallbackSecret) {
     req.log?.warn('payhero callback with a bad secret');
     return res.status(404).json({ ok: false });
   }

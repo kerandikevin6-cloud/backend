@@ -8,8 +8,9 @@
    is nothing in the payload that proves it came from them. Two things
    compensate, and both matter:
 
-     1. The callback URL carries a secret path token (PAYHERO_CALLBACK_SECRET)
-        that only we and PayHero know. A caller without it is rejected.
+     1. The callback URL carries a secret path token, derived from a key
+        only this server holds, that only we and PayHero know. A caller
+        without it is rejected.
      2. We never trust the amount or status in the callback body. It is
         treated purely as a nudge to go and ask PayHero what happened,
         and the answer from that query is what settles the payment.
@@ -18,7 +19,7 @@
    this codebase is in minor units, so the conversion happens here and
    is the only place it should ever happen.
    ============================================================ */
-import { env, payheroToken } from '../config/env.js';
+import { env, payheroToken, payheroCallbackSecret } from '../config/env.js';
 import { upstream } from '../lib/errors.js';
 
 async function call(path, options = {}) {
@@ -85,7 +86,7 @@ export async function transactionStatus(reference) {
 }
 
 export function callbackUrl() {
-  return `${env.API_URL}/webhooks/payhero/${env.PAYHERO_CALLBACK_SECRET}`;
+  return `${env.API_URL}/webhooks/payhero/${payheroCallbackSecret}`;
 }
 
 /**

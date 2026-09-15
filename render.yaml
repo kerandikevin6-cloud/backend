@@ -15,17 +15,9 @@ services:
     envVars:
       - key: NODE_ENV
         value: production
-      - key: TRUST_PROXY
-        value: "1"
-      - key: SUPABASE_URL
-        sync: false
-      - key: SUPABASE_ANON_KEY
-        sync: false
       - key: SUPABASE_SERVICE_ROLE_KEY
         sync: false
       - key: PAYSTACK_SECRET_KEY
-        sync: false
-      - key: PAYSTACK_PUBLIC_KEY
         sync: false
       - key: PAYHERO_API_USERNAME
         sync: false
@@ -33,8 +25,6 @@ services:
         sync: false
       - key: PAYHERO_CHANNEL_ID
         sync: false
-      - key: PAYHERO_CALLBACK_SECRET
-        generateValue: true
       - key: APP_URL
         sync: false
       - key: API_URL

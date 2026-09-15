@@ -12,7 +12,8 @@ import helmet from 'helmet';
 import pinoHttp from 'pino-http';
 import pino from 'pino';
 
-import { env, isProd, corsOrigins } from './config/env.js';
+import { env, corsOrigins } from './config/env.js';
+import { callbackUrl as payheroCallbackUrl } from './services/payhero.js';
 import { generalLimiter } from './middleware/rateLimit.js';
 import { errorHandler, notFoundHandler } from './middleware/errorHandler.js';
 
@@ -75,10 +76,11 @@ app.get('/health', (_req, res) => {
 });
 
 app.get('/config', (_req, res) => {
-  /* What the browser is allowed to know. Public keys and limits only. */
+  /* What the browser is allowed to know: the limits it should enforce
+     before bothering the server. No keys — nothing payment-shaped runs
+     in the browser. */
   res.json({
     ok: true,
-    paystackPublicKey: env.PAYSTACK_PUBLIC_KEY,
     minDepositMinor: env.MIN_DEPOSIT_MINOR,
     maxDepositMinor: env.MAX_DEPOSIT_MINOR,
     minWithdrawalMinor: env.MIN_WITHDRAWAL_MINOR,
@@ -96,7 +98,10 @@ app.use(errorHandler);
 
 const server = app.listen(env.PORT, () => {
   logger.info(`nexas-api listening on ${env.PORT} (${env.NODE_ENV})`);
-  if (!isProd) logger.info(`webhooks expect to be reachable at ${env.API_URL}`);
+  /* The PayHero callback is derived rather than configured, so the only
+     way to know it is to be told. Printed once, into the server log. */
+  logger.info(`paystack webhook   ${env.API_URL}/webhooks/paystack`);
+  logger.info(`payhero callback   ${payheroCallbackUrl()}`);
 });
 
 /* Render sends SIGTERM on deploy. Finish in-flight requests rather than

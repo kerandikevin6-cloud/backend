@@ -74,7 +74,7 @@ After the first deploy:
 
 1. Set `API_URL` to the live URL, then redeploy so callback URLs are built correctly.
 2. Paystack dashboard → Settings → Webhooks → `https://<service>.onrender.com/webhooks/paystack`.
-3. PayHero callback → `https://<service>.onrender.com/webhooks/payhero/<PAYHERO_CALLBACK_SECRET>`.
+3. PayHero callback → the URL printed in the boot log as `payhero callback`. It is derived from the service-role key rather than configured, so it is stable across restarts and instances — but rotating that key changes it, and the dashboard has to be updated at the same time.
 4. Supabase → Authentication → URL Configuration → add your site URL and redirect URLs.
 5. Supabase → Authentication → Providers → Google: add the client ID and secret, and set the callback to `https://<project>.supabase.co/auth/v1/callback`.
 
