@@ -102,6 +102,12 @@ const server = app.listen(env.PORT, () => {
      way to know it is to be told. Printed once, into the server log. */
   logger.info(`paystack webhook   ${env.API_URL}/webhooks/paystack`);
   logger.info(`payhero callback   ${payheroCallbackUrl()}`);
+  /* An empty allow-list is not an error — webhooks and health checks carry
+     no Origin — but every browser call will be refused, which looks like
+     the API being down rather than a missing setting. Say so out loud. */
+  if (!corsOrigins.length) {
+    logger.warn('CORS_ORIGINS is empty: no browser origin can call this API');
+  }
 });
 
 /* Render sends SIGTERM on deploy. Finish in-flight requests rather than

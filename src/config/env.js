@@ -53,7 +53,8 @@ const schema = z.object({
 
   /* Where the browser app lives, and where this service can be reached.
      Payment providers post callbacks to API_URL, so it has to be a real
-     public address once deployed. */
+     public address once deployed — see the fallbacks below, which mean
+     neither normally has to be set by hand on Render. */
   APP_URL: z.string().url(),
   API_URL: z.string().url(),
   CORS_ORIGINS: z.string().default(''),
@@ -75,12 +76,29 @@ const schema = z.object({
   PAYHERO_CHANNEL_ID: z.string().optional().default('')
 });
 
-const parsed = schema.safeParse(process.env);
+/* ---------- URL fallbacks ----------
+   Render exports RENDER_EXTERNAL_URL for every web service: the real
+   public address of this instance. That is exactly what API_URL is, so
+   take it from there rather than making somebody paste it in and risk a
+   payment callback pointed at the wrong host.
+
+   APP_URL is the front end, which this service cannot know, so it falls
+   back to the first allowed CORS origin (which is the front end, by
+   definition) and only then to the API's own address. Set it explicitly
+   once the site has a domain. */
+const firstOrigin = (process.env.CORS_ORIGINS || '')
+  .split(',').map(v => v.trim()).filter(Boolean)[0];
+
+const API_URL = process.env.API_URL || process.env.RENDER_EXTERNAL_URL || undefined;
+const APP_URL = process.env.APP_URL || firstOrigin || API_URL || undefined;
+
+const parsed = schema.safeParse({ ...process.env, API_URL, APP_URL });
 
 if (!parsed.success) {
   const lines = parsed.error.issues.map(i => `  ${i.path.join('.')}: ${i.message}`);
   console.error('Configuration is incomplete:\n' + lines.join('\n') +
-    '\n\nCopy .env.example to .env and fill it in.');
+    '\n\nCopy .env.example to .env and fill it in.' +
+    '\nOn Render these are set under Environment, not in a file.');
   process.exit(1);
 }
 

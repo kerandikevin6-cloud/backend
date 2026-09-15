@@ -25,9 +25,10 @@ services:
         sync: false
       - key: PAYHERO_CHANNEL_ID
         sync: false
-      - key: APP_URL
+      # API_URL is not listed: it defaults to RENDER_EXTERNAL_URL, which
+      # Render sets itself, so the payment callbacks always point at this
+      # instance. Set it only if the API sits behind a custom domain.
+      - key: CORS_ORIGINS      # your front end origins, comma separated
         sync: false
-      - key: API_URL
-        sync: false
-      - key: CORS_ORIGINS
+      - key: APP_URL           # defaults to the first CORS origin
         sync: false
