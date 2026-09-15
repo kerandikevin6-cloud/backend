@@ -15,6 +15,7 @@
 import { Router } from 'express';
 import { admin } from '../lib/supabase.js';
 import { payheroCallbackSecret } from '../config/env.js';
+import { events } from '../lib/events.js';
 import * as paystack from '../services/paystack.js';
 import * as payhero from '../services/payhero.js';
 import { reconcile } from './deposits.routes.js';
@@ -30,6 +31,9 @@ router.post('/paystack', async (req, res) => {
 
   if (!Buffer.isBuffer(raw) || !paystack.verifySignature(raw, signature)) {
     req.log?.warn('paystack webhook failed signature check');
+    events.error('paystack', 'Webhook rejected: signature did not verify', {
+      context: { hadSignature: !!signature }
+    });
     return res.status(401).json({ ok: false });
   }
 
@@ -45,6 +49,9 @@ router.post('/paystack', async (req, res) => {
 
     if (!payment) {
       req.log?.warn({ reference }, 'paystack webhook for unknown reference');
+      events.error('paystack', 'Webhook for a reference we have no record of', {
+        reference, context: { event: event.event }
+      });
       return;
     }
 
@@ -62,6 +69,7 @@ router.post('/paystack', async (req, res) => {
     }
   } catch (err) {
     req.log?.error({ err }, 'paystack webhook processing failed');
+    events.error('paystack', 'Webhook processing failed: ' + err.message);
   }
 });
 
@@ -72,6 +80,9 @@ router.post('/paystack', async (req, res) => {
 router.post('/payhero/:secret', async (req, res) => {
   if (req.params.secret !== payheroCallbackSecret) {
     req.log?.warn('payhero callback with a bad secret');
+    events.warn('payhero', 'Callback rejected: wrong secret in the path', {
+      context: { hint: 'the URL in the PayHero dashboard may be stale' }
+    });
     return res.status(404).json({ ok: false });
   }
 
@@ -89,6 +100,9 @@ router.post('/payhero/:secret', async (req, res) => {
 
     if (!payment) {
       req.log?.warn({ reference: info.reference }, 'payhero callback for unknown reference');
+      events.error('payhero', 'Callback for a reference we have no record of', {
+        reference: info.reference
+      });
       return;
     }
 
@@ -96,6 +110,7 @@ router.post('/payhero/:secret', async (req, res) => {
     await reconcile(payment);
   } catch (err) {
     req.log?.error({ err }, 'payhero callback processing failed');
+    events.error('payhero', 'Callback processing failed: ' + err.message);
   }
 });
 

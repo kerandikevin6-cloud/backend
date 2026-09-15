@@ -78,6 +78,29 @@ After the first deploy:
 4. Supabase → Authentication → URL Configuration → add your site URL and redirect URLs.
 5. Supabase → Authentication → Providers → Google: add the client ID and secret, and set the callback to `https://<project>.supabase.co/auth/v1/callback`.
 
+## When something is not working
+
+The console's **Logs** page is the first place to look. It shows, at the
+top, whether this service can currently reach Supabase, Paystack and
+PayHero — each probe is an authenticated call, so a green light means the
+credentials work, not merely that the hostname resolves. A dependency can
+report `key` rather than `down`, which is the difference between "they
+are having an outage" and "our key was rotated".
+
+Underneath is `system_events`: the things worth acting on. A refused
+origin, a webhook whose signature did not verify, an STK push that never
+left. It is not a copy of the request log — that stays on the host, where
+nothing in the console can read it and a deploy erases it.
+
+The most common failure is a browser call that never arrives, reported by
+the site as "could not reach Nexas". Nine times in ten that is CORS: the
+origin is not in `CORS_ORIGINS`, the browser refuses to send the request,
+and the reason never reaches JavaScript. The Logs page records every
+refused origin with the address that was turned away, so the fix is to
+read the line and add that origin. Preview deploys change hostname every
+build, so `CORS_ORIGINS` accepts one wildcard label —
+`https://*.vercel.app` — alongside exact origins.
+
 ## The first super admin
 
 There is no endpoint that grants admin, and there should not be: an
@@ -86,7 +109,7 @@ somebody else, and it stays reachable from the internet forever after.
 The first one is made by hand, once, in the Supabase SQL editor — where
 the only way in is your own Supabase password.
 
-1. Run `sql/005_roles.sql`. It widens `profiles.role` to the seven roles
+1. Run `sql/005_roles.sql` (and `sql/006_events.sql`, which the Logs page reads). It widens `profiles.role` to the seven roles
    the console actually assigns; before it, creating a `manager` fails on
    a CHECK constraint left over from `003`.
 2. Create the account the normal way — sign up on the site, or Supabase →

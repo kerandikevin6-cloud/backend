@@ -9,6 +9,9 @@ import { requireStaff, requireRole, audit, STAFF_ROLES } from '../middleware/adm
 import { validate } from '../middleware/validate.js';
 import { notFound, badRequest, conflict, HttpError } from '../lib/errors.js';
 import { reconcile } from './deposits.routes.js';
+import { checkAll } from '../services/health.js';
+import { env, corsOrigins } from '../config/env.js';
+import { callbackUrl as payheroCallbackUrl } from '../services/payhero.js';
 
 const router = Router();
 router.use(requireStaff);
@@ -575,6 +578,65 @@ router.get('/audit', requireRole('super_admin', 'admin'), async (req, res, next)
       .order('created_at', { ascending: false })
       .limit(Math.min(200, Number(req.query.limit) || 100));
     res.json({ ok: true, entries: data || [] });
+  } catch (err) { next(err); }
+});
+
+/* ---------------- system ----------------
+   What is up, and what has gone wrong lately. Staff-wide rather than
+   admin-only: the person who notices a deposit is not arriving is
+   usually the one answering the customer, not the one with the keys. */
+router.get('/health', async (req, res, next) => {
+  try {
+    const services = await checkAll();
+    res.json({
+      ok: true,
+      services,
+      app: {
+        env: env.NODE_ENV,
+        apiUrl: env.API_URL,
+        appUrl: env.APP_URL,
+        corsOrigins,
+        uptimeSeconds: Math.round(process.uptime()),
+        minDepositMinor: env.MIN_DEPOSIT_MINOR,
+        maxDepositMinor: env.MAX_DEPOSIT_MINOR,
+        usdRateKes: env.USD_RATE_KES,
+        webhooks: {
+          paystack: `${env.API_URL}/webhooks/paystack`,
+          payhero: payheroCallbackUrl()
+        }
+      },
+      checkedAt: new Date().toISOString()
+    });
+  } catch (err) { next(err); }
+});
+
+router.get('/logs', async (req, res, next) => {
+  try {
+    const limit = Math.min(200, Number(req.query.limit) || 100);
+    let q = admin.from('system_events').select('*')
+      .order('created_at', { ascending: false })
+      .limit(limit);
+
+    if (req.query.level && req.query.level !== 'all') q = q.eq('level', req.query.level);
+    if (req.query.source && req.query.source !== 'all') q = q.eq('source', req.query.source);
+    if (req.query.q) q = q.ilike('message', `%${String(req.query.q).slice(0, 80)}%`);
+
+    const { data, error } = await q;
+    if (error) throw new HttpError(500, 'logs_failed', error.message);
+
+    res.json({
+      ok: true,
+      entries: (data || []).map(e => ({
+        id: e.id,
+        level: e.level,
+        source: e.source,
+        message: e.message,
+        context: e.context,
+        reference: e.reference,
+        userId: e.user_id,
+        at: e.created_at
+      }))
+    });
   } catch (err) { next(err); }
 });
 

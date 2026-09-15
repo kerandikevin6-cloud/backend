@@ -117,6 +117,32 @@ export const corsOrigins = env.CORS_ORIGINS
   .map(s => s.trim())
   .filter(Boolean);
 
+/* An entry may be an exact origin, or one wildcard subdomain such as
+   https://*.vercel.app. Preview deploys get a fresh hostname every time,
+   and a browser refuses a request from an origin the API does not list —
+   which reaches the user as "could not reach the server", not as a CORS
+   message, so it is a hard failure to diagnose from the outside.
+
+   The wildcard matches one label only: https://*.vercel.app allows
+   nexas-abc123.vercel.app but not a.b.vercel.app, and never a bare
+   vercel.app. Scheme and port must still match exactly. */
+export function originAllowed(origin) {
+  if (!origin) return false;
+  for (const entry of corsOrigins) {
+    if (entry === origin) return true;
+    const star = entry.indexOf('://*.');
+    if (star === -1) continue;
+    const scheme = entry.slice(0, star + 3);
+    const suffix = entry.slice(star + 4);          /* ".vercel.app" */
+    if (!origin.startsWith(scheme)) continue;
+    const host = origin.slice(scheme.length);
+    if (!host.endsWith(suffix)) continue;
+    const label = host.slice(0, host.length - suffix.length);
+    if (label && !label.includes('.')) return true;
+  }
+  return false;
+}
+
 /* PayHero authenticates with HTTP Basic. */
 export const payheroToken =
   env.PAYHERO_BASIC_TOKEN ||

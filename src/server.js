@@ -12,7 +12,8 @@ import helmet from 'helmet';
 import pinoHttp from 'pino-http';
 import pino from 'pino';
 
-import { env, corsOrigins } from './config/env.js';
+import { env, corsOrigins, originAllowed } from './config/env.js';
+import { events } from './lib/events.js';
 import { callbackUrl as payheroCallbackUrl } from './services/payhero.js';
 import { generalLimiter } from './middleware/rateLimit.js';
 import { errorHandler, notFoundHandler } from './middleware/errorHandler.js';
@@ -54,7 +55,15 @@ app.use(cors({
     /* No Origin header means a server-to-server call or a health probe,
        which CORS does not govern. */
     if (!origin) return cb(null, true);
-    if (corsOrigins.includes(origin)) return cb(null, true);
+    if (originAllowed(origin)) return cb(null, true);
+    /* Logged at warn, because from the browser this is invisible: the
+       page reports a network failure and nothing says which origin was
+       turned away. This line is the answer, and it is what the console's
+       Logs page surfaces. */
+    logger.warn({ origin, allowed: corsOrigins }, 'cors: origin refused');
+    events.warn('cors', 'Refused a request from ' + origin, {
+      context: { origin, allowed: corsOrigins }
+    });
     cb(new Error(`Origin ${origin} is not allowed`));
   },
   credentials: true,

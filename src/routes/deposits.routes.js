@@ -22,6 +22,7 @@ import { paymentLimiter } from '../middleware/rateLimit.js';
 import { badRequest, notFound } from '../lib/errors.js';
 import { env } from '../config/env.js';
 import { newReference } from '../lib/reference.js';
+import { events } from '../lib/events.js';
 import { normalisePhone } from '../lib/phone.js';
 import { formatMinor } from '../lib/money.js';
 import * as paystack from '../services/paystack.js';
@@ -115,6 +116,11 @@ router.post('/mpesa',
           p_raw: null
         }).catch(() => {});
       }
+      events.error('payhero', 'STK push failed: ' + (err.message || 'unknown'), {
+        userId: req.user.id,
+        reference: payment?.reference,
+        context: { amountMinor: req.body.amountMinor }
+      });
       next(err);
     }
   });
@@ -164,6 +170,11 @@ router.post('/card',
           p_raw: null
         }).catch(() => {});
       }
+      events.error('paystack', 'Could not open a checkout: ' + (err.message || 'unknown'), {
+        userId: req.user.id,
+        reference: payment?.reference,
+        context: { amountMinor: req.body.amountMinor }
+      });
       next(err);
     }
   });
