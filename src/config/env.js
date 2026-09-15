@@ -31,7 +31,7 @@ const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY ||
 /* ---------- product rules ----------
    Minor units (cents). 10000 = KES 100.00 */
 const RULES = {
-  MIN_DEPOSIT_MINOR: 10000,        /* KES 100 */
+  MIN_DEPOSIT_MINOR: 1000,         /* KES 10 — lowered for live testing */
   MAX_DEPOSIT_MINOR: 15000000,     /* KES 150,000 */
   MIN_WITHDRAWAL_MINOR: 100000,    /* USD 1,000 in cents */
 
