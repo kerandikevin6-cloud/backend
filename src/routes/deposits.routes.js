@@ -203,7 +203,18 @@ router.get('/:reference', requireAuth, async (req, res, next) => {
     if (!payment) throw notFound('No such payment');
 
     if (payment.status === 'pending') {
-      await reconcile(payment).catch(() => {});
+      /* Not swallowed. A reconcile that throws on every poll is exactly
+         the shape of "the money left my phone and the screen still says
+         waiting" — and with the error discarded there was nothing
+         anywhere to say so. */
+      await reconcile(payment).catch(err => {
+        events.error('payhero', 'Could not confirm ' + payment.reference +
+          ': ' + (err?.message || 'unknown'), {
+          userId: req.user.id,
+          reference: payment.reference,
+          context: { provider: payment.provider, providerRef: payment.provider_ref }
+        });
+      });
       const { data: fresh } = await admin
         .from('payments').select('*').eq('id', payment.id).single();
       return res.json({ ok: true, payment: publicPayment(fresh) });
@@ -253,8 +264,21 @@ export async function reconcile(payment) {
   }
 
   if (payment.provider === 'payhero') {
-    const tx = await payhero.transactionStatus(payment.reference);
-    const info = payhero.readCallback(tx);
+    const found = await payhero.findTransaction(payment);
+    const tx = found.body;
+    const info = found.info;
+
+    if (!info || !info.status) {
+      /* Asked with every handle we have and none of them named a status.
+         Worth recording: a payment the customer says they made, that the
+         provider will not confirm, is the case that needs a human. */
+      events.warn('payhero', 'Status lookup returned nothing for ' + payment.reference, {
+        reference: payment.reference,
+        context: { tried: [payment.provider_ref, payment.reference].filter(Boolean), response: tx }
+      });
+      return;
+    }
+
     if (payhero.isSuccess(info.status)) {
       const collectedMinor = info.amount != null
         ? Math.round(Number(info.amount) * 100)
@@ -270,6 +294,14 @@ export async function reconcile(payment) {
         p_payment_id: payment.id,
         p_reason: info.status || 'failed',
         p_raw: tx
+      });
+    } else {
+      /* Neither success nor failure we recognise — still in flight, or a
+         status word we have not seen. Recorded so an unknown one shows up
+         here rather than as a customer waiting on a spinner. */
+      events.info('payhero', 'Payment still unsettled: status "' + info.status + '"', {
+        reference: payment.reference,
+        context: { handle: found.handle, status: info.status }
       });
     }
   }

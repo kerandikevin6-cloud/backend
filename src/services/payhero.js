@@ -118,6 +118,43 @@ export async function transactionStatus(reference) {
   return call(`/transaction-status?reference=${encodeURIComponent(reference)}`);
 }
 
+/**
+ * The same question, asked with each handle we hold for the payment.
+ *
+ * This exists because "reference" means two different things. We send
+ * PayHero an external_reference of our own (MP-xxxx) and they hand back
+ * a CheckoutRequestID of theirs, and which one /transaction-status wants
+ * has not been consistent. Asking with ours alone is how a payment the
+ * customer actually made sits pending forever: the lookup finds nothing,
+ * nothing is settled, and no error is raised because "not found" is a
+ * perfectly good answer to a question about the wrong reference.
+ *
+ * Returns the first answer that names a status, and the handle that got
+ * it, so the log can say which one worked.
+ */
+export async function findTransaction(payment) {
+  const handles = [payment.provider_ref, payment.reference]
+    .filter(Boolean)
+    .filter((v, i, a) => a.indexOf(v) === i);
+
+  let lastError = null;
+
+  for (const handle of handles) {
+    let body;
+    try {
+      body = await transactionStatus(handle);
+    } catch (err) {
+      lastError = err;
+      continue;
+    }
+    const info = readCallback(body);
+    if (info.status) return { body, info, handle };
+  }
+
+  if (lastError) throw lastError;
+  return { body: null, info: null, handle: null };
+}
+
 export function callbackUrl() {
   return `${env.API_URL}/webhooks/payhero/${payheroCallbackSecret}`;
 }
@@ -133,18 +170,30 @@ export function readCallback(body) {
   return {
     reference: r.ExternalReference || r.external_reference || r.reference || null,
     providerRef: r.MpesaReceiptNumber || r.mpesa_receipt_number ||
+                 r.third_party_reference || r.provider_reference ||
                  r.CheckoutRequestID || r.transaction_reference || null,
-    status: String(r.Status || r.status || '').toLowerCase(),
+    /* transaction-status answers with transaction_status or Status
+       depending on the account; the callback uses Status. Take whichever
+       is present. */
+    status: String(r.Status || r.status ||
+                   r.transaction_status || r.TransactionStatus || '').toLowerCase(),
     amount: r.Amount ?? r.amount ?? null,
     phone: r.Phone || r.phone_number || null
   };
 }
 
+/* Deliberately a list and not a pattern. Money moves on a match here, so
+   a word PayHero starts using that we do not know should leave a payment
+   unsettled and an entry in the log — which a person reads and adds —
+   rather than being swept in by a regex that also matches
+   "unsuccessful". */
 export function isSuccess(status) {
-  return ['success', 'completed', 'successful'].includes(String(status || '').toLowerCase());
+  return ['success', 'completed', 'successful', 'complete', 'paid']
+    .includes(String(status || '').toLowerCase());
 }
 
 export function isFailure(status) {
-  return ['failed', 'cancelled', 'canceled', 'timeout', 'expired']
+  return ['failed', 'failure', 'cancelled', 'canceled', 'timeout',
+          'expired', 'reversed', 'declined', 'unsuccessful']
     .includes(String(status || '').toLowerCase());
 }
