@@ -8,7 +8,20 @@
 import { admin } from '../lib/supabase.js';
 import { unauthorized, forbidden } from '../lib/errors.js';
 
-const STAFF = ['operator', 'finance', 'admin'];
+/* The full set of roles that may open the console. This is the door;
+   requireRole() below narrows individual actions once inside. The list
+   has to match the CHECK constraint on profiles.role (sql/005_roles.sql)
+   — a role the database accepts but this list omits is an account that
+   can be created and then cannot sign in. */
+export const STAFF_ROLES = [
+  'super_admin',      /* creates other staff; the only role that can */
+  'admin',
+  'manager',
+  'finance',          /* moves money: approves payouts */
+  'operator',         /* day to day: users, KYC, payments */
+  'marketing',
+  'session_handler'   /* runs one live session at a time */
+];
 
 export async function requireStaff(req, _res, next) {
   try {
@@ -25,7 +38,7 @@ export async function requireStaff(req, _res, next) {
       .eq('id', data.user.id)
       .single();
 
-    if (!profile || !STAFF.includes(profile.role)) {
+    if (!profile || !STAFF_ROLES.includes(profile.role)) {
       /* Deliberately vague. Confirming that an endpoint exists but is
          out of reach is more than an outsider needs to know. */
       throw forbidden('This account cannot use the console.');

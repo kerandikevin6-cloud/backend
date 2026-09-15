@@ -5,7 +5,7 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import { admin } from '../lib/supabase.js';
-import { requireStaff, requireRole, audit } from '../middleware/adminAuth.js';
+import { requireStaff, requireRole, audit, STAFF_ROLES } from '../middleware/adminAuth.js';
 import { validate } from '../middleware/validate.js';
 import { notFound, badRequest, conflict, HttpError } from '../lib/errors.js';
 import { reconcile } from './deposits.routes.js';
@@ -455,8 +455,9 @@ router.post('/sessions/:id/end',
     } catch (err) { next(err); }
   });
 
-/* ---------------- staff ---------------- */
-const STAFF_ROLES = ['operator', 'finance', 'manager', 'marketing', 'session_handler', 'admin', 'super_admin'];
+/* ---------------- staff ----------------
+   The assignable roles are STAFF_ROLES, imported so there is one list
+   rather than two that drift. */
 
 router.get('/staff', requireRole('admin', 'super_admin', 'manager'), async (req, res, next) => {
   try {

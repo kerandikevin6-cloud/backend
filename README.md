@@ -78,6 +78,40 @@ After the first deploy:
 4. Supabase → Authentication → URL Configuration → add your site URL and redirect URLs.
 5. Supabase → Authentication → Providers → Google: add the client ID and secret, and set the callback to `https://<project>.supabase.co/auth/v1/callback`.
 
+## The first super admin
+
+There is no endpoint that grants admin, and there should not be: an
+endpoint that can make the first super admin can make the second one for
+somebody else, and it stays reachable from the internet forever after.
+The first one is made by hand, once, in the Supabase SQL editor — where
+the only way in is your own Supabase password.
+
+1. Run `sql/005_roles.sql`. It widens `profiles.role` to the seven roles
+   the console actually assigns; before it, creating a `manager` fails on
+   a CHECK constraint left over from `003`.
+2. Create the account the normal way — sign up on the site, or Supabase →
+   Authentication → Users → Add user with **Auto Confirm** on. The profile
+   row is written by the `handle_new_user` trigger, and it must exist
+   before step 3 can update anything.
+3. Promote it:
+
+   ```sql
+   update public.profiles
+      set role = 'super_admin', status = 'active'
+    where lower(email) = lower('you@example.com');
+   ```
+
+4. Confirm, then sign in to the console. This should return one row:
+
+   ```sql
+   select email, role, status from public.profiles where role <> 'customer';
+   ```
+
+Everyone else is created from the console: Admins → New, which only a
+`super_admin` can reach. `005` also installs a trigger that refuses to
+demote or suspend the last active super admin — not a grant, just a
+refusal to let the console lock everybody out.
+
 ## Connecting the front end
 
 `assets/js/api.js` already has the seam:
