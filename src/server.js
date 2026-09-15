@@ -80,8 +80,23 @@ app.use('/webhooks', express.json({ limit: '1mb' }), webhookRoutes);
 app.use(express.json({ limit: '256kb' }));
 app.use(generalLimiter);
 
+/* uptime is here on purpose. A 502 from the host looks the same whether
+   the instance is asleep, restarting, or crashed — and from a browser it
+   also looks like a CORS failure, because an error page carries no CORS
+   headers. Uptime settles it: poll this, and if the number keeps
+   resetting the process is dying; if it climbs, the 502s were the host
+   waking a sleeping instance. Neither fact is sensitive. */
+const startedAt = Date.now();
+
 app.get('/health', (_req, res) => {
-  res.json({ ok: true, service: 'nexas-api', env: env.NODE_ENV, time: new Date().toISOString() });
+  res.json({
+    ok: true,
+    service: 'nexas-api',
+    env: env.NODE_ENV,
+    uptimeSeconds: Math.round(process.uptime()),
+    startedAt: new Date(startedAt).toISOString(),
+    time: new Date().toISOString()
+  });
 });
 
 app.get('/config', (_req, res) => {
@@ -117,6 +132,46 @@ const server = app.listen(env.PORT, () => {
   if (!corsOrigins.length) {
     logger.warn('CORS_ORIGINS is empty: no browser origin can call this API');
   }
+});
+
+/* ---- crashes leave a note ----
+   A process that dies without saying why is the hardest thing to debug
+   on a host you cannot attach to: the request 502s, the next request
+   502s while it restarts, and the log is gone by the time anyone looks.
+
+   An unhandled rejection does NOT take the service down here. The
+   default is to exit, and for most programs that is right — but this one
+   settles payments, and dying mid-settlement is worse than continuing
+   with one broken promise. It is recorded loudly instead.
+
+   An uncaught exception is different: the process is in an unknown state
+   after one, so it is logged and then allowed to die so the host can
+   start a clean one. */
+/* Enough of a stack to name the file and the line, not enough to fill
+   a log line with framework internals. */
+function firstLines(stack) {
+  return String(stack || '').split(String.fromCharCode(10)).slice(0, 4).join(' | ');
+}
+
+process.on('unhandledRejection', (reason) => {
+  const message = reason?.message || String(reason);
+  logger.error({ err: reason }, 'unhandled rejection: ' + message);
+  try {
+    events.error('server', 'Unhandled rejection: ' + message, {
+      context: { stack: firstLines(reason?.stack) }
+    });
+  } catch (e) { /* logging must never be the thing that kills it */ }
+});
+
+process.on('uncaughtException', (err) => {
+  logger.fatal({ err }, 'uncaught exception: ' + err.message);
+  try {
+    events.error('server', 'Uncaught exception, restarting: ' + err.message, {
+      context: { stack: firstLines(err.stack) }
+    });
+  } catch (e) {}
+  /* Give the log line a moment to leave the box, then go. */
+  setTimeout(() => process.exit(1), 500).unref();
 });
 
 /* Render sends SIGTERM on deploy. Finish in-flight requests rather than
