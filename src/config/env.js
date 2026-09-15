@@ -143,12 +143,45 @@ export function originAllowed(origin) {
   return false;
 }
 
-/* PayHero authenticates with HTTP Basic. */
-export const payheroToken =
-  env.PAYHERO_BASIC_TOKEN ||
-  (env.PAYHERO_API_USERNAME && env.PAYHERO_API_PASSWORD
-    ? Buffer.from(`${env.PAYHERO_API_USERNAME}:${env.PAYHERO_API_PASSWORD}`).toString('base64')
-    : '');
+/* ---------- PayHero HTTP Basic ----------
+   Two ways to configure the same thing, which is one more than is safe:
+   when both are set, a wrong token used to win silently over a correct
+   username and password, and the failure it produced was a request
+   PayHero answered with 200 and success:false — no prompt, no error,
+   nobody any the wiser.
+
+   So the token is checked rather than trusted. It must decode to
+   "something:something"; a value that does not is treated as not set,
+   and the username and password are used instead. A pasted "Basic xxx"
+   is also tidied up, because that is what the dashboard shows you. */
+function readBasicToken(raw) {
+  const value = String(raw || '').trim().replace(/^Basic\s+/i, '');
+  if (!value) return { token: '', why: 'unset' };
+  try {
+    const decoded = Buffer.from(value, 'base64').toString('utf8');
+    if (!decoded.includes(':')) return { token: '', why: 'malformed' };
+    return { token: value, why: 'token' };
+  } catch {
+    return { token: '', why: 'malformed' };
+  }
+}
+
+const basic = readBasicToken(env.PAYHERO_BASIC_TOKEN);
+
+const derived = (env.PAYHERO_API_USERNAME && env.PAYHERO_API_PASSWORD)
+  ? Buffer.from(`${env.PAYHERO_API_USERNAME}:${env.PAYHERO_API_PASSWORD}`).toString('base64')
+  : '';
+
+export const payheroToken = basic.token || derived;
+
+/* Which of the two is in use, and why — printed at boot. Never the
+   value, only where it came from. */
+export const payheroAuthSource =
+  basic.token ? 'PAYHERO_BASIC_TOKEN'
+  : derived ? (basic.why === 'malformed'
+      ? 'username and password (PAYHERO_BASIC_TOKEN is set but not valid base64 of "user:pass" — ignored)'
+      : 'username and password')
+  : 'nothing — M-Pesa is not configured';
 
 /* ---------- PayHero callback secret ----------
    PayHero does not sign its callbacks, so the callback URL carries a

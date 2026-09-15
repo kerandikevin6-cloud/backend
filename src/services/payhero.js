@@ -48,6 +48,15 @@ async function call(path, options = {}) {
   if (!res.ok) {
     throw upstream(body.error_message || body.message || `PayHero returned ${res.status}`);
   }
+
+  /* A 200 is not a yes. PayHero answers a refused request with HTTP 200
+     and success:false in the body, so trusting the status code alone
+     means telling somebody to check their phone for a prompt that was
+     never sent — and they wait, and nothing ever arrives, and there is
+     no error anywhere to explain it. */
+  if (body && body.success === false) {
+    throw upstream(body.error_message || body.message || 'M-Pesa refused the request');
+  }
   return body;
 }
 
@@ -60,19 +69,43 @@ async function call(path, options = {}) {
  */
 export async function stkPush({ phone, amountMinor, reference, name }) {
   const amount = Math.round(amountMinor / 100);   // PayHero wants shillings
+  const channelId = Number(env.PAYHERO_CHANNEL_ID);
 
-  return call('/payments', {
+  /* Without a channel there is no account for the money to land in.
+     PayHero has been known to accept the request anyway and do nothing
+     with it, which is the worst possible answer, so refuse it here. */
+  if (!channelId) {
+    throw upstream('M-Pesa is not finished being set up on this server');
+  }
+
+  const body = await call('/payments', {
     method: 'POST',
     body: JSON.stringify({
       amount,
       phone_number: phone,
-      channel_id: Number(env.PAYHERO_CHANNEL_ID) || undefined,
+      channel_id: channelId,
       provider: 'm-pesa',
       external_reference: reference,
       customer_name: name || undefined,
       callback_url: callbackUrl()
     })
   });
+
+  /* Accepted means they gave us something to track it by. A response
+     with no handle in it is not a queued push, whatever it says. */
+  const handle = body?.CheckoutRequestID || body?.checkout_request_id ||
+                 body?.reference || body?.transaction_reference;
+  const status = String(body?.status || '').toUpperCase();
+
+  if (!handle && !['QUEUED', 'PENDING', 'SUCCESS'].includes(status)) {
+    throw upstream(body?.error_message || body?.message ||
+      'M-Pesa did not accept the request');
+  }
+  if (['FAILED', 'CANCELLED', 'CANCELED'].includes(status)) {
+    throw upstream(body?.error_message || 'M-Pesa declined the request');
+  }
+
+  return body;
 }
 
 /**

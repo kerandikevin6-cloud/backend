@@ -100,6 +100,15 @@ router.post('/mpesa',
         })
         .eq('id', payment.id);
 
+      /* Recorded on the way out, not only when it breaks. "The push was
+         accepted and here is exactly what they said" is the line that
+         settles an argument about whether a prompt was ever sent. */
+      events.info('payhero', 'STK push accepted for ' + phone.slice(0, 6) + '***', {
+        userId: req.user.id,
+        reference: payment.reference,
+        context: { amountMinor: payment.amount_minor, response: result }
+      });
+
       res.status(202).json({
         ok: true,
         status: 'pending',

@@ -10,7 +10,7 @@ import { validate } from '../middleware/validate.js';
 import { notFound, badRequest, conflict, HttpError } from '../lib/errors.js';
 import { reconcile } from './deposits.routes.js';
 import { checkAll } from '../services/health.js';
-import { env, corsOrigins } from '../config/env.js';
+import { env, corsOrigins, payheroAuthSource } from '../config/env.js';
 import { callbackUrl as payheroCallbackUrl } from '../services/payhero.js';
 
 const router = Router();
@@ -600,6 +600,11 @@ router.get('/health', async (req, res, next) => {
         minDepositMinor: env.MIN_DEPOSIT_MINOR,
         maxDepositMinor: env.MAX_DEPOSIT_MINOR,
         usdRateKes: env.USD_RATE_KES,
+        /* Where the M-Pesa credentials came from, never what they are.
+           Two env vars configure the same thing, so which one won is
+           worth being able to see. */
+        payheroAuth: payheroAuthSource,
+        payheroChannel: env.PAYHERO_CHANNEL_ID || null,
         webhooks: {
           paystack: `${env.API_URL}/webhooks/paystack`,
           payhero: payheroCallbackUrl()

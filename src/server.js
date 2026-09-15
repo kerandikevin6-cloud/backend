@@ -12,7 +12,7 @@ import helmet from 'helmet';
 import pinoHttp from 'pino-http';
 import pino from 'pino';
 
-import { env, corsOrigins, originAllowed } from './config/env.js';
+import { env, corsOrigins, originAllowed, payheroAuthSource } from './config/env.js';
 import { events } from './lib/events.js';
 import { callbackUrl as payheroCallbackUrl } from './services/payhero.js';
 import { generalLimiter } from './middleware/rateLimit.js';
@@ -132,6 +132,8 @@ const server = app.listen(env.PORT, () => {
   if (!corsOrigins.length) {
     logger.warn('CORS_ORIGINS is empty: no browser origin can call this API');
   }
+  logger.info(`payhero auth       ${payheroAuthSource}`);
+  logger.info(`payhero channel    ${env.PAYHERO_CHANNEL_ID || 'NOT SET — M-Pesa will refuse'}`);
 });
 
 /* ---- crashes leave a note ----
