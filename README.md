@@ -109,8 +109,9 @@ somebody else, and it stays reachable from the internet forever after.
 The first one is made by hand, once, in the Supabase SQL editor — where
 the only way in is your own Supabase password.
 
-1. Run `sql/005_roles.sql`, `sql/006_events.sql` (the Logs page) and
-   `sql/007_trades.sql` (trade history). It widens `profiles.role` to the seven roles
+1. Run `sql/005_roles.sql`, `sql/006_events.sql` (the Logs page),
+   `sql/007_trades.sql` (trade history) and `sql/008_vip_mpesa.sql`
+   (the VIP demo rail). It widens `profiles.role` to the seven roles
    the console actually assigns; before it, creating a `manager` fails on
    a CHECK constraint left over from `003`.
 2. Create the account the normal way — sign up on the site, or Supabase →
@@ -143,6 +144,63 @@ refusal to let the console lock everybody out.
 ```html
 <script>window.NEXAS_API = "https://nexas-api.onrender.com";</script>
 ```
+
+## The VIP demo rail
+
+Every account is **Standard** by default and moves real money. An admin can
+promote one to **VIP**, and a VIP's deposits settle against a companion M-Pesa
+clone app instead of PayHero: the money comes off a handset in the room and
+lands on the trading balance in real time, so a deposit can be shown working
+without anybody spending a shilling.
+
+Run `sql/008_vip_mpesa.sql`. It adds `profiles.tier`, the two wallet tables and
+the functions that move them.
+
+**Setting one up**, in the console, on the user's drawer:
+
+1. **Make VIP.** The tier alone changes nothing a customer can see.
+2. **Set the handset**: a four digit PIN, the balance the phone will show, and
+   the Fuliza limit. Tier and wallet are separate on purpose, because they fail
+   separately, and "VIP with no wallet" is a state an operator needs to see
+   rather than infer from a deposit that will not work.
+3. The customer types that PIN into the M-Pesa app **once**. It is exchanged
+   for a device token the phone keeps, so the binding survives the app closing.
+
+| Route | Who calls it | Auth |
+| --- | --- | --- |
+| `POST /mpesa/link` | An unlinked handset | The PIN itself, rate limited |
+| `GET /mpesa/account` | The handset, polling | Device token |
+| `POST /mpesa/agent-withdraw` | The handset | Device token |
+| `POST /mpesa/receive` | The handset | Device token |
+| `POST /mpesa/reset` | Between rehearsals | Device token |
+| `POST /deposits/mpesa` | A VIP's terminal | The normal customer token; the tier is checked server side |
+
+The deposit endpoint is **the same one Standard accounts use**. The fork happens
+inside it, from the database, so the browser cannot ask to be on the demo rail
+and a customer demoted mid-session stops being on it immediately.
+
+### Fuliza
+
+The limit is set per wallet by an admin rather than derived from the balance,
+because here it is a thing being demonstrated rather than simulated. It behaves
+as the real product does: money out that the balance cannot cover draws the
+shortfall from the limit and floors the balance at zero, money in repays what is
+owed before it touches the balance, and a debit past balance-plus-remaining-limit
+is refused outright.
+
+### The line this must not cross
+
+The wallet is a presentation prop. It touches no PayHero credential and no
+Paystack key, it is reachable only for accounts an admin has marked VIP, and
+Standard accounts remain the only path real money takes. The PIN is stored in
+plain text **deliberately**: it is assigned by an admin, never chosen by a
+customer, so it cannot be anyone's real M-Pesa PIN, and the console has to read
+it back to tell them what to type. If it ever gates anything real it needs
+hashing and rate limiting first.
+
+A VIP deposit still writes a `payments` row and still settles through
+`settle_deposit`, so it appears in the ledger and the console exactly as a real
+one does. The provider is `mpesa_demo`, which is how you tell them apart.
 
 ## Trade history is the client's account, not the server's
 

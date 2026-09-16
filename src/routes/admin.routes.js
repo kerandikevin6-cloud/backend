@@ -10,6 +10,7 @@ import { validate } from '../middleware/validate.js';
 import { notFound, badRequest, conflict, HttpError } from '../lib/errors.js';
 import { reconcile } from './deposits.routes.js';
 import { checkAll } from '../services/health.js';
+import * as demo from '../services/mpesaDemo.js';
 import { env, corsOrigins, payheroAuthSource } from '../config/env.js';
 import { callbackUrl as payheroCallbackUrl } from '../services/payhero.js';
 
@@ -137,6 +138,7 @@ router.patch('/users/:id',
   validate(z.object({
     kycStatus: z.enum(['unverified', 'pending', 'verified', 'rejected']).optional(),
     status: z.enum(['active', 'suspended']).optional(),
+    tier: z.enum(['standard', 'vip']).optional(),
     reason: z.string().max(300).optional()
   })),
   async (req, res, next) => {
@@ -151,6 +153,11 @@ router.patch('/users/:id',
         patch.status = req.body.status;
         patch.suspended_reason = req.body.status === 'suspended' ? (req.body.reason || null) : null;
       }
+      /* Moving an account onto the demo rail, or off it. Off is the
+         consequential direction: a VIP demoted to Standard is back on
+         real money, so the wallet is left in place rather than deleted,
+         and an admin removes it deliberately. */
+      if (req.body.tier) patch.tier = req.body.tier;
       if (!Object.keys(patch).length) throw badRequest('Nothing to change');
 
       const { data, error } = await admin
@@ -581,6 +588,90 @@ router.get('/audit', requireRole('super_admin', 'admin'), async (req, res, next)
   } catch (err) { next(err); }
 });
 
+/* ---------------- the VIP demo wallet ----------------
+   Setting one up is what makes a VIP account usable: without a wallet
+   the handset has no PIN to link with and a deposit has nothing to come
+   off. Tier and wallet are separate on purpose, because they fail
+   separately, and "promoted but not set up" is a state an operator needs
+   to be able to see rather than guess at.
+
+   The PIN is returned in full. The console has to be able to read it
+   back to tell the customer what to type, which is the whole reason it
+   is stored in plain text, and the reason it must never guard anything
+   real. */
+router.get('/users/:id/wallet',
+  requireRole('super_admin', 'admin', 'manager', 'operator'),
+  async (req, res, next) => {
+    try {
+      const wallet = await demo.walletFor(req.params.id);
+      const statement = wallet ? await demo.statementFor(req.params.id, 20) : [];
+      res.json({ ok: true, wallet, statement });
+    } catch (err) { next(err); }
+  });
+
+router.put('/users/:id/wallet',
+  requireRole('super_admin', 'admin', 'manager'),
+  validate(z.object({
+    pin: z.string().regex(/^\d{4}$/, 'The PIN must be four digits').optional(),
+    balanceMinor: z.coerce.number().int().min(0).optional(),
+    fulizaLimitMinor: z.coerce.number().int().min(0).optional(),
+    name: z.string().max(80).optional(),
+    phone: z.string().max(20).optional()
+  })),
+  async (req, res, next) => {
+    try {
+      const { data: profile } = await admin
+        .from('profiles').select('id,display_name,phone,tier')
+        .eq('id', req.params.id).maybeSingle();
+      if (!profile) throw notFound('No such user');
+
+      const wallet = await demo.setWallet(req.params.id, {
+        pin: req.body.pin,
+        balanceMinor: req.body.balanceMinor,
+        fulizaLimitMinor: req.body.fulizaLimitMinor,
+        /* Default the handset's own header to who the account says it
+           is, so an operator setting up a wallet does not have to retype
+           what the profile already knows. */
+        name: req.body.name ?? profile.display_name ?? undefined,
+        phone: req.body.phone ?? profile.phone ?? undefined
+      });
+
+      /* The PIN itself is never audited. The audit trail is read by more
+         people than the console is, and a log of PINs is a list of keys
+         to every demo wallet. */
+      await audit(req, 'wallet.set', req.params.id, {
+        pinChanged: !!req.body.pin,
+        balanceMinor: req.body.balanceMinor ?? null,
+        fulizaLimitMinor: req.body.fulizaLimitMinor ?? null
+      });
+
+      res.json({ ok: true, wallet, tier: profile.tier });
+    } catch (err) { next(err); }
+  });
+
+router.post('/users/:id/wallet/reset',
+  requireRole('super_admin', 'admin', 'manager'),
+  validate(z.object({ balanceMinor: z.coerce.number().int().min(0).optional() })),
+  async (req, res, next) => {
+    try {
+      const wallet = await demo.resetWallet(req.params.id, req.body.balanceMinor ?? null);
+      await audit(req, 'wallet.reset', req.params.id, {
+        balanceMinor: req.body.balanceMinor ?? null
+      });
+      res.json({ ok: true, wallet });
+    } catch (err) { next(err); }
+  });
+
+router.delete('/users/:id/wallet',
+  requireRole('super_admin', 'admin'),
+  async (req, res, next) => {
+    try {
+      await demo.clearWallet(req.params.id);
+      await audit(req, 'wallet.clear', req.params.id, null);
+      res.json({ ok: true });
+    } catch (err) { next(err); }
+  });
+
 /* ---------------- system ----------------
    What is up, and what has gone wrong lately. Staff-wide rather than
    admin-only: the person who notices a deposit is not arriving is
@@ -655,6 +746,7 @@ function publicUser(u, balances) {
     country: u.country,
     kyc: u.kyc_status,
     status: u.status,
+    tier: u.tier || 'standard',
     role: u.role,
     referralCode: u.referral_code,
     trades: u.trades_count || 0,

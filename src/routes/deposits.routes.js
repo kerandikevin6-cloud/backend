@@ -23,6 +23,7 @@ import { badRequest, notFound } from '../lib/errors.js';
 import { env } from '../config/env.js';
 import { newReference } from '../lib/reference.js';
 import { events } from '../lib/events.js';
+import * as demo from '../services/mpesaDemo.js';
 import { normalisePhone } from '../lib/phone.js';
 import { formatMinor } from '../lib/money.js';
 import * as paystack from '../services/paystack.js';
@@ -77,6 +78,15 @@ router.post('/mpesa',
       if (!phone) throw badRequest('That phone number does not look right', {
         phone: 'Enter the number in full, for example 0712345678'
       });
+
+      /* The fork. A VIP settles against the companion handset instead of
+         against PayHero, and the customer's browser never knows the
+         difference: same endpoint, same request, same shape back. The
+         decision is made here, from the database, rather than being
+         something the client can ask for. */
+      if (await demo.tierOf(req.user.id) === 'vip') {
+        return depositFromHandset(req, res, { phone, profile });
+      }
 
       payment = await createPending({
         userId: req.user.id,
@@ -133,6 +143,108 @@ router.post('/mpesa',
       next(err);
     }
   });
+
+/* ---------------- the VIP demo rail ----------------
+   Where the Standard path raises a real STK push and waits for a
+   callback, this takes the money off the handset and settles at once.
+
+   Order matters, and it is the opposite of the real path's. The phone is
+   debited FIRST: if the deposit then fails to book or settle, the phone
+   is refunded, so a failure cannot leave a demo down a balance it never
+   traded with. On the real path the payment row is written first,
+   because there the risk runs the other way, money taken with nothing to
+   settle against. Same principle, different direction: never leave the
+   customer short. */
+async function depositFromHandset(req, res, { phone, profile }) {
+  const amountMinor = req.body.amountMinor;
+  const reference = newReference('VIP');
+  let payment;
+
+  /* 1. Take it off the phone. */
+  let moved;
+  try {
+    moved = await demo.move({
+      userId: req.user.id,
+      kind: 'DEPOSIT',
+      amountMinor,
+      direction: 'OUT',
+      title: 'Pay to Novi',
+      subtitle: 'Trading deposit',
+      reference
+    });
+  } catch (err) {
+    if (err instanceof demo.InsufficientFunds || err instanceof demo.NoWallet) throw err;
+    events.error('mpesa-demo', 'Could not debit the handset: ' + (err.message || 'unknown'), {
+      userId: req.user.id, reference
+    });
+    throw err;
+  }
+
+  const refund = () => demo.move({
+    userId: req.user.id,
+    kind: 'REVERSAL',
+    amountMinor,
+    direction: 'IN',
+    title: 'Reversal, Novi',
+    subtitle: 'Deposit could not be completed',
+    reference
+  }).catch(() => undefined);
+
+  /* 2. Put it on the trading balance, through the same function a real
+        deposit uses, so the ledger cannot tell the two apart. */
+  try {
+    payment = await createPending({
+      userId: req.user.id,
+      provider: 'mpesa_demo',
+      amount_minor: amountMinor,
+      currency: req.body.currency,
+      phone
+    });
+
+    const { localToUsdMinor } = await import('../lib/money.js');
+    const { error: settleError } = await admin.rpc('settle_deposit', {
+      p_payment_id: payment.id,
+      p_provider_ref: moved.tx.reference,
+      p_credited_minor: localToUsdMinor(amountMinor, req.body.currency),
+      p_raw: { rail: 'mpesa_demo', balanceAfterMinor: moved.balanceMinor }
+    });
+    if (settleError) throw new Error(settleError.message);
+  } catch (err) {
+    await refund();
+    if (payment) {
+      await admin.rpc('fail_payment', {
+        p_payment_id: payment.id,
+        p_reason: 'demo rail could not settle',
+        p_raw: null
+      }).catch(() => {});
+    }
+    events.error('mpesa-demo', 'Deposit failed after the handset was debited, refunded: ' +
+      (err.message || 'unknown'), { userId: req.user.id, reference });
+    throw err;
+  }
+
+  events.info('mpesa-demo', 'VIP deposit settled from the handset', {
+    userId: req.user.id,
+    reference,
+    context: { amountMinor, balanceAfterMinor: moved.balanceMinor }
+  });
+
+  /* Answered as settled rather than pending, because it is: there is no
+     callback coming. The browser's poll finds it already successful. */
+  return res.status(201).json({
+    ok: true,
+    status: 'success',
+    rail: 'demo',
+    reference: payment.reference,
+    creditedMinor: amountMinor,
+    handset: {
+      balanceMinor: moved.balanceMinor,
+      fulizaUsedMinor: moved.fulizaUsedMinor,
+      fulizaLimitMinor: moved.fulizaLimitMinor
+    },
+    message: 'Paid from your M-Pesa. The balance is on your account now.'
+  });
+}
 
 /* ---------------- Card, via Paystack ---------------- */
 router.post('/card',
