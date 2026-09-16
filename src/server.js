@@ -23,6 +23,7 @@ import depositRoutes from './routes/deposits.routes.js';
 import withdrawalRoutes from './routes/withdrawals.routes.js';
 import tradeRoutes from './routes/trades.routes.js';
 import kycRoutes from './routes/kyc.routes.js';
+import ticketRoutes from './routes/tickets.routes.js';
 import mpesaRoutes from './routes/mpesa.routes.js';
 import webhookRoutes from './routes/webhooks.routes.js';
 import adminRoutes from './routes/admin.routes.js';
@@ -120,6 +121,7 @@ app.use('/deposits', depositRoutes);
 app.use('/withdrawals', withdrawalRoutes);
 app.use('/trades', tradeRoutes);
 app.use('/kyc', kycRoutes);
+app.use('/tickets', ticketRoutes);
 /* The companion handset. No Supabase session: it authenticates with a
    device token issued when its PIN was accepted. */
 app.use('/mpesa', mpesaRoutes);

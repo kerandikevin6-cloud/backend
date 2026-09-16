@@ -618,6 +618,90 @@ router.get('/audit', requireRole('super_admin', 'admin'), async (req, res, next)
   } catch (err) { next(err); }
 });
 
+/* ---------------- support tickets ----------------
+   One question, one answer. The queue is oldest first while open, for
+   the same reason the verification queue is: a newest-first queue is how
+   the first person keeps waiting. */
+router.get('/tickets',
+  requireRole('super_admin', 'admin', 'manager', 'operator', 'support'),
+  async (req, res, next) => {
+    try {
+      const status = ['open', 'answered', 'closed'].includes(req.query.status)
+        ? req.query.status : 'open';
+
+      const { data, error } = await admin
+        .from('support_tickets')
+        .select('*')
+        .eq('status', status)
+        .order('created_at', { ascending: status === 'open' })
+        .limit(100);
+      if (error) throw new HttpError(500, 'tickets_failed', error.message);
+
+      const rows = data || [];
+      const ids = [...new Set(rows.map(r => r.user_id))];
+      const people = {};
+      if (ids.length) {
+        const { data: profiles } = await admin
+          .from('profiles')
+          .select('id,display_name,email,phone,country,tier')
+          .in('id', ids);
+        for (const p of profiles || []) people[p.id] = p;
+      }
+
+      res.json({
+        ok: true,
+        tickets: rows.map(t => {
+          const who = people[t.user_id];
+          return {
+            id: t.id,
+            userId: t.user_id,
+            userName: who?.display_name || null,
+            userEmail: who?.email || null,
+            userPhone: who?.phone || null,
+            userTier: who?.tier || 'standard',
+            category: t.category,
+            body: t.body,
+            status: t.status,
+            reply: t.reply,
+            at: t.created_at,
+            repliedAt: t.replied_at
+          };
+        })
+      });
+    } catch (err) { next(err); }
+  });
+
+router.post('/tickets/:id',
+  requireRole('super_admin', 'admin', 'manager', 'operator', 'support'),
+  validate(z.object({
+    reply: z.string().trim().min(2).max(2000),
+    close: z.boolean().optional()
+  })),
+  async (req, res, next) => {
+    try {
+      const { data, error } = await admin.rpc('reply_ticket', {
+        p_ticket: req.params.id,
+        p_actor: req.operator.id,
+        p_reply: req.body.reply,
+        p_close: !!req.body.close
+      });
+
+      if (error) {
+        if (/TICKET_NOT_FOUND/.test(error.message)) throw notFound('No such ticket');
+        if (/REPLY_EMPTY/.test(error.message)) throw badRequest('Write a reply first.');
+        throw new HttpError(500, 'reply_failed', error.message);
+      }
+
+      const row = Array.isArray(data) ? data[0] : data;
+      await audit(req, 'ticket.reply', row?.user_id, { ticket: req.params.id });
+      events.info('support', 'Ticket answered', {
+        userId: row?.user_id, context: { ticket: req.params.id }
+      });
+
+      res.json({ ok: true, ticket: { id: row?.id, status: row?.status } });
+    } catch (err) { next(err); }
+  });
+
 /* ---------------- verifications ----------------
    The queue of documents waiting on a decision.
 
