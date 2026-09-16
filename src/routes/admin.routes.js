@@ -11,6 +11,7 @@ import { notFound, badRequest, conflict, HttpError } from '../lib/errors.js';
 import { reconcile } from './deposits.routes.js';
 import { checkAll } from '../services/health.js';
 import * as demo from '../services/mpesaDemo.js';
+import { events } from '../lib/events.js';
 import { env, corsOrigins, payheroAuthSource } from '../config/env.js';
 import { callbackUrl as payheroCallbackUrl } from '../services/payhero.js';
 
@@ -616,6 +617,122 @@ router.get('/audit', requireRole('super_admin', 'admin'), async (req, res, next)
     res.json({ ok: true, entries: data || [] });
   } catch (err) { next(err); }
 });
+
+/* ---------------- verifications ----------------
+   The queue of documents waiting on a decision.
+
+   Each row carries a signed URL rather than a path. The bucket is
+   private and staff hold no storage credentials of their own, so a link
+   that expires is the only way to put the document in front of the
+   person reviewing it. Ten minutes is long enough to look and short
+   enough that a URL pasted into a chat is dead before anybody else
+   opens it. */
+const DOC_LINK_SECONDS = 600;
+
+router.get('/verifications',
+  requireRole('super_admin', 'admin', 'manager', 'operator'),
+  async (req, res, next) => {
+    try {
+      const status = ['pending', 'approved', 'rejected'].includes(req.query.status)
+        ? req.query.status : 'pending';
+
+      const { data, error } = await admin
+        .from('kyc_submissions')
+        .select('*')
+        .eq('status', status)
+        /* Oldest first while pending: somebody has been waiting, and a
+           newest-first queue is how they keep waiting. */
+        .order('created_at', { ascending: status === 'pending' })
+        .limit(100);
+      if (error) throw new HttpError(500, 'verifications_failed', error.message);
+
+      const rows = data || [];
+      const ids = [...new Set(rows.map(r => r.user_id))];
+
+      const people = {};
+      if (ids.length) {
+        const { data: profiles } = await admin
+          .from('profiles')
+          .select('id,display_name,email,phone,country,kyc_status,tier,created_at')
+          .in('id', ids);
+        for (const p of profiles || []) people[p.id] = p;
+      }
+
+      const out = [];
+      for (const row of rows) {
+        let url = null;
+        const { data: signed } = await admin.storage
+          .from('kyc')
+          .createSignedUrl(row.storage_path, DOC_LINK_SECONDS);
+        if (signed?.signedUrl) url = signed.signedUrl;
+
+        const who = people[row.user_id];
+        out.push({
+          id: row.id,
+          userId: row.user_id,
+          userName: who?.display_name || null,
+          userEmail: who?.email || null,
+          userPhone: who?.phone || null,
+          userCountry: who?.country || null,
+          userTier: who?.tier || 'standard',
+          userJoined: who?.created_at || null,
+          kind: row.kind,
+          status: row.status,
+          note: row.note,
+          mimeType: row.mime_type,
+          byteSize: row.byte_size,
+          documentUrl: url,
+          at: row.created_at,
+          reviewedAt: row.reviewed_at
+        });
+      }
+
+      res.json({ ok: true, verifications: out });
+    } catch (err) { next(err); }
+  });
+
+router.post('/verifications/:id',
+  requireRole('super_admin', 'admin', 'manager', 'operator'),
+  validate(z.object({
+    action: z.enum(['approve', 'reject']),
+    note: z.string().max(300).optional()
+  })),
+  async (req, res, next) => {
+    try {
+      const approve = req.body.action === 'approve';
+
+      /* A rejection without a reason is a customer who will send the
+         same document again tomorrow. */
+      if (!approve && !req.body.note) {
+        throw badRequest('Say why it was rejected, so they know what to send instead.', {
+          note: 'Give a reason'
+        });
+      }
+
+      const { data, error } = await admin.rpc('decide_kyc', {
+        p_submission: req.params.id,
+        p_actor: req.operator.id,
+        p_approve: approve,
+        p_note: req.body.note || null
+      });
+
+      if (error) {
+        if (/SUBMISSION_NOT_FOUND/.test(error.message)) throw notFound('No such submission');
+        throw new HttpError(500, 'decide_failed', error.message);
+      }
+
+      const row = Array.isArray(data) ? data[0] : data;
+      await audit(req, approve ? 'kyc.approve' : 'kyc.reject', row?.user_id, {
+        submission: req.params.id, note: req.body.note || null
+      });
+
+      events.info('kyc', approve ? 'Verification approved' : 'Verification rejected', {
+        userId: row?.user_id, context: { submission: req.params.id }
+      });
+
+      res.json({ ok: true, verification: { id: row?.id, status: row?.status } });
+    } catch (err) { next(err); }
+  });
 
 /* ---------------- the VIP demo wallet ----------------
    Setting one up is what makes a VIP account usable: without a wallet
