@@ -39,7 +39,12 @@ const tradeSchema = z.object({
   entrySpot: z.coerce.number().optional(),
   exitSpot: z.coerce.number().optional(),
   openedAt: z.coerce.date(),
-  settledAt: z.coerce.date()
+  settledAt: z.coerce.date(),
+  /* Staged by the presentation mode rather than played on the published
+     odds. Tagged so the console's own figures can tell a demonstration
+     from the business: a win rate that quietly includes staged wins is a
+     number nobody can use. */
+  demoMode: z.boolean().optional()
 });
 
 function publicTrade(t) {
@@ -57,6 +62,7 @@ function publicTrade(t) {
     profitMinor: t.profit_minor,
     currency: t.currency,
     status: t.status,
+    demoMode: !!t.demo_mode,
     ticks: t.ticks,
     openedAt: t.opened_at,
     settledAt: t.settled_at
@@ -135,7 +141,8 @@ router.post('/',
         entry_spot: t.entrySpot ?? null,
         exit_spot: t.exitSpot ?? null,
         opened_at: t.openedAt.toISOString(),
-        settled_at: t.settledAt.toISOString()
+        settled_at: t.settledAt.toISOString(),
+        demo_mode: !!t.demoMode
       }));
 
       /* ignoreDuplicates: a re-send is not an error. */

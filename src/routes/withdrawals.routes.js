@@ -18,6 +18,8 @@ import { badRequest, forbidden, notFound, conflict, HttpError } from '../lib/err
 import { env } from '../config/env.js';
 import { normalisePhone } from '../lib/phone.js';
 import { formatMinor } from '../lib/money.js';
+import { events } from '../lib/events.js';
+import * as demo from '../services/mpesaDemo.js';
 
 const router = Router();
 
@@ -39,8 +41,22 @@ router.post('/',
   async (req, res, next) => {
     try {
       const { data: profile } = await admin
-        .from('profiles').select('kyc_status,country,phone')
+        .from('profiles').select('kyc_status,country,phone,tier')
         .eq('id', req.user.id).single();
+
+      /* A VIP funded from the prop wallet, so their payout goes back to
+         the prop wallet. This is what closes the loop: fake money in,
+         fake money out, and no route at all from a VIP balance to real
+         cash. Before this the two rails met here, and the only thing
+         stopping a staged win being paid in shillings was a person
+         noticing on the review screen.
+
+         Taken before the identity check on purpose. Verifying a document
+         to move a prop balance is theatre, and asking for one is how a
+         demonstration stalls. */
+      if (profile?.tier === 'vip') {
+        return withdrawToHandset(req, res, { profile });
+      }
 
       /* Identity first. This is a regulatory requirement, not a product
          preference, and it is cheaper to enforce before the money is
@@ -101,6 +117,92 @@ router.post('/',
       });
     } catch (err) { next(err); }
   });
+
+/* ---------------- the VIP demo rail ----------------
+   The mirror of depositFromHandset. The trading balance is debited
+   through the same function a real request uses, so the ledger reads the
+   same, and the money lands on the handset instead of in a queue for
+   somebody to pay by hand.
+
+   Order is the reverse of the deposit's, and for the same reason: debit
+   the side that can be put back. The balance is held first, and if the
+   handset then cannot be credited the hold is released, so a failure
+   cannot leave a demo holding a balance that is neither on the account
+   nor on the phone. */
+async function withdrawToHandset(req, res, next) {
+  const amountMinor = req.body.amountMinor;
+
+  /* 1. Take it off the trading balance, and settle the request in the
+        same breath: there is nobody to review a payout that is not real,
+        and a pending row nobody will ever action is worse than no row. */
+  const { data, error } = await admin.rpc('hold_for_withdrawal', {
+    p_user_id: req.user.id,
+    p_amount_minor: amountMinor,
+    p_method: 'mpesa_demo',
+    p_destination: { rail: 'mpesa_demo' }
+  });
+
+  if (error) {
+    if (/insufficient funds/i.test(error.message)) {
+      throw badRequest('That is more than your available balance', {
+        amountMinor: 'Not enough funds'
+      });
+    }
+    throw new HttpError(400, 'withdrawal_failed', error.message);
+  }
+
+  const request = Array.isArray(data) ? data[0] : data;
+
+  /* 2. Put it on the phone. */
+  let moved;
+  try {
+    moved = await demo.move({
+      userId: req.user.id,
+      kind: 'WITHDRAWAL',
+      amountMinor,
+      direction: 'IN',
+      title: 'Received from Novi',
+      subtitle: 'Trading withdrawal'
+    });
+  } catch (err) {
+    /* release_withdrawal takes a status, not an actor: 'cancelled' is
+       what puts the held amount back on the balance. */
+    await admin.rpc('release_withdrawal', {
+      p_request_id: request.id,
+      p_status: 'cancelled',
+      p_note: 'demo rail could not credit the handset'
+    }).catch(() => {});
+    events.error('mpesa-demo', 'Withdrawal failed after the balance was held, released: ' +
+      (err.message || 'unknown'), { userId: req.user.id, context: { amountMinor } });
+    throw err;
+  }
+
+  /* reviewed_by stays null on purpose: nobody reviewed this, the rail
+     paid it. A staff id here would be a person's name against a payout
+     they never saw. */
+  await admin.rpc('settle_withdrawal', {
+    p_request_id: request.id,
+    p_actor: null,
+    p_note: 'Paid to the M-Pesa demo handset'
+  }).catch(() => {});
+
+  events.info('mpesa-demo', 'VIP withdrawal paid onto the handset', {
+    userId: req.user.id,
+    context: { amountMinor, balanceAfterMinor: moved.balanceMinor }
+  });
+
+  return res.status(201).json({
+    ok: true,
+    status: 'paid',
+    rail: 'demo',
+    request: publicRequest(request),
+    handset: {
+      balanceMinor: moved.balanceMinor,
+      fulizaUsedMinor: moved.fulizaUsedMinor
+    },
+    message: 'Sent to your M-Pesa. It is on the phone now.'
+  });
+}
 
 router.get('/', requireAuth, async (req, res, next) => {
   try {

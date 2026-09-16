@@ -64,7 +64,7 @@ router.get('/users', async (req, res, next) => {
 
     let q = admin
       .from('profiles')
-      .select('id,email,display_name,phone,country,kyc_status,status,role,tier,' +
+      .select('id,email,display_name,phone,country,kyc_status,status,role,tier,demo_mode,' +
               'referral_code,trades_count,created_at,last_seen_at', { count: 'exact' })
       .eq('role', 'customer')
       /* VIPs first, newest first within each group. Ordered in the query
@@ -148,6 +148,7 @@ router.patch('/users/:id',
     kycStatus: z.enum(['unverified', 'pending', 'verified', 'rejected']).optional(),
     status: z.enum(['active', 'suspended']).optional(),
     tier: z.enum(['standard', 'vip']).optional(),
+    demoMode: z.boolean().optional(),
     reason: z.string().max(300).optional()
   })),
   async (req, res, next) => {
@@ -167,6 +168,20 @@ router.patch('/users/:id',
          real money, so the wallet is left in place rather than deleted,
          and an admin removes it deliberately. */
       if (req.body.tier) patch.tier = req.body.tier;
+
+      /* The presentation switch. Refused for a Standard account here as
+         well as by the trigger: the route can give a reason a person can
+         read, and the database is what makes it true regardless of which
+         route is used. */
+      if (req.body.demoMode !== undefined) {
+        const { data: who } = await admin
+          .from('profiles').select('tier').eq('id', req.params.id).maybeSingle();
+        const willBeVip = (req.body.tier || who?.tier) === 'vip';
+        if (req.body.demoMode && !willBeVip) {
+          throw badRequest('Demo mode is only available on VIP accounts.');
+        }
+        patch.demo_mode = req.body.demoMode;
+      }
       if (!Object.keys(patch).length) throw badRequest('Nothing to change');
 
       const { data, error } = await admin
@@ -256,7 +271,12 @@ router.get('/withdrawals', async (req, res, next) => {
     if (ids.length) {
       const { data: profiles } = await admin
         .from('profiles')
-        .select('id,display_name,email,phone,kyc_status,status,trades_count')
+        /* tier and demo_mode are on this screen for one reason: a VIP's
+           deposits come off a prop wallet, so a payout request from one
+           is a different decision from a payout request from somebody
+           who sent real money. A reviewer cannot weigh what they cannot
+           see. */
+        .select('id,display_name,email,phone,kyc_status,status,trades_count,tier,demo_mode')
         .in('id', ids);
       for (const p of profiles || []) people[p.id] = p;
     }
@@ -756,6 +776,7 @@ function publicUser(u, balances) {
     kyc: u.kyc_status,
     status: u.status,
     tier: u.tier || 'standard',
+    demoMode: !!u.demo_mode,
     role: u.role,
     referralCode: u.referral_code,
     trades: u.trades_count || 0,
@@ -796,6 +817,11 @@ function publicWithdrawal(w, person) {
     userStatus: person?.status || null,
     userPhone: person?.phone || null,
     userTrades: person?.trades_count || 0,
+    /* A VIP funded from the prop wallet, and whether their wins were
+       staged. A reviewer looking at a payout request needs both: the
+       amounts look identical either way. */
+    userTier: person?.tier || 'standard',
+    userDemoMode: !!person?.demo_mode,
     amountMinor: Number(w.amount_minor),
     currency: w.currency,
     method: w.method,
