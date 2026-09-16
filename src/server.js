@@ -21,6 +21,7 @@ import { errorHandler, notFoundHandler } from './middleware/errorHandler.js';
 import authRoutes from './routes/auth.routes.js';
 import depositRoutes from './routes/deposits.routes.js';
 import withdrawalRoutes from './routes/withdrawals.routes.js';
+import tradeRoutes from './routes/trades.routes.js';
 import webhookRoutes from './routes/webhooks.routes.js';
 import adminRoutes from './routes/admin.routes.js';
 
@@ -115,6 +116,7 @@ app.get('/config', (_req, res) => {
 app.use('/auth', authRoutes);
 app.use('/deposits', depositRoutes);
 app.use('/withdrawals', withdrawalRoutes);
+app.use('/trades', tradeRoutes);
 app.use('/admin', adminRoutes);
 
 app.use(notFoundHandler);

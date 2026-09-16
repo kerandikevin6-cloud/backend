@@ -109,7 +109,8 @@ somebody else, and it stays reachable from the internet forever after.
 The first one is made by hand, once, in the Supabase SQL editor — where
 the only way in is your own Supabase password.
 
-1. Run `sql/005_roles.sql` (and `sql/006_events.sql`, which the Logs page reads). It widens `profiles.role` to the seven roles
+1. Run `sql/005_roles.sql`, `sql/006_events.sql` (the Logs page) and
+   `sql/007_trades.sql` (trade history). It widens `profiles.role` to the seven roles
    the console actually assigns; before it, creating a `manager` fails on
    a CHECK constraint left over from `003`.
 2. Create the account the normal way — sign up on the site, or Supabase →
@@ -142,6 +143,21 @@ refusal to let the console lock everybody out.
 ```html
 <script>window.NEXAS_API = "https://nexas-api.onrender.com";</script>
 ```
+
+## Trade history is the client's account, not the server's
+
+`/trades` records settled contracts so a person's history survives the
+browser it was made in. It is not evidence. Contracts are still decided
+client side, so a row says what that browser reported — anyone can open
+devtools and write themselves a winning history.
+
+Two things keep that contained, and both are in the schema rather than in
+a convention somebody can forget: nothing in `trades` can reach a balance
+(no trigger, no function, no path to `accounts` or `ledger_entries`), and
+a row is immutable once written (no UPDATE or DELETE policy for anyone).
+
+When settlement moves server side this table becomes the record of what
+the server decided, and only the insert policy changes.
 
 ## Still to do before real money
 
