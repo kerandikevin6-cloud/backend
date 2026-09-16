@@ -133,8 +133,12 @@ revoke all on function public.domain_figures()     from public, anon, authentica
 grant execute on function public.session_figures(uuid) to service_role;
 grant execute on function public.domain_figures()      to service_role;
 
--- Seed the host you are already serving from, so the console is not
--- empty on day one. Change it to your real domain.
+-- The hosts this product is served from, so the console is not empty on
+-- day one. The console itself is listed too: it is a domain that has to
+-- be kept in the CORS allow-list and pointed at DNS like any other, and
+-- a list of domains that omits one of them is a list you cannot trust.
 insert into public.domains (host, label, status)
-values ('nexas.trade', 'Primary', 'live')
+values
+  ('novibinary.com',           'Primary',  'live'),
+  ('adminsite.novibinary.com', 'Console',  'live')
 on conflict (host) do nothing;
