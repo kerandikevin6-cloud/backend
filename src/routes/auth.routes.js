@@ -46,7 +46,7 @@ router.post('/signup',
         password: pass,
         options: {
           data: { full_name: name, country },
-          emailRedirectTo: `${env.APP_URL}/login.html?confirmed=1`
+          emailRedirectTo: `${env.APP_URL}/login?confirmed=1`
         }
       });
 
@@ -125,7 +125,13 @@ router.post('/login',
    with a session in the URL fragment. */
 router.get('/google', async (req, res, next) => {
   try {
-    const redirectTo = `${env.APP_URL}/login.html?oauth=1`;
+    /* Clean URLs: the site dropped .html from every address, and the host
+       308s the old form to the new one. That redirect does carry the
+       fragment Supabase puts the tokens in, but relying on it is a hop
+       and an assumption for no reason, and every one of these addresses
+       has to be on the Supabase redirect allow-list by hand, where two
+       spellings of the same page is one more thing to get wrong. */
+    const redirectTo = `${env.APP_URL}/login?oauth=1`;
     const { data, error } = await anon.auth.signInWithOAuth({
       provider: 'google',
       options: { redirectTo, skipBrowserRedirect: true }
@@ -154,7 +160,7 @@ router.post('/forgot-password',
   async (req, res, next) => {
     try {
       await anon.auth.resetPasswordForEmail(req.body.email, {
-        redirectTo: `${env.APP_URL}/reset-password.html`
+        redirectTo: `${env.APP_URL}/reset-password`
       });
       /* Always the same answer, whether or not the address is on file. */
       res.json({

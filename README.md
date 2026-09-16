@@ -75,7 +75,24 @@ After the first deploy:
 1. Nothing to do for `API_URL` — it defaults to Render's own `RENDER_EXTERNAL_URL`, so callbacks point at the live service from the first boot. Set it explicitly only behind a custom domain. `APP_URL` defaults to the first `CORS_ORIGINS` entry.
 2. Paystack dashboard → Settings → Webhooks → `https://<service>.onrender.com/webhooks/paystack`.
 3. PayHero callback → the URL printed in the boot log as `payhero callback`. It is derived from the service-role key rather than configured, so it is stable across restarts and instances — but rotating that key changes it, and the dashboard has to be updated at the same time.
-4. Supabase → Authentication → URL Configuration → add your site URL and redirect URLs.
+4. Supabase, Authentication, URL Configuration:
+
+   **Site URL** `https://novibinary.com`
+
+   **Redirect URLs** (one per line). These are the three addresses this
+   service asks Supabase to send people back to, so they are the three
+   that have to be allowed. A wildcard covers them, but listing them is
+   worth the extra minute: a wildcard also allows every future page,
+   including ones nobody meant to make a landing spot for an auth token.
+
+   ```
+   https://novibinary.com/login
+   https://novibinary.com/reset-password
+   https://novibinary.com
+   ```
+
+   For previews and local work, add what you actually use:
+   `http://localhost:5500/**`, `https://*.vercel.app/**`.
 5. Supabase → Authentication → Providers → Google: add the client ID and secret, and set the callback to `https://<project>.supabase.co/auth/v1/callback`.
 
 ## When something is not working
