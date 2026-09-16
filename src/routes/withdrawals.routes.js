@@ -16,8 +16,8 @@ import { validate } from '../middleware/validate.js';
 import { paymentLimiter } from '../middleware/rateLimit.js';
 import { badRequest, forbidden, notFound, conflict, HttpError } from '../lib/errors.js';
 import { env } from '../config/env.js';
-import { normalisePhone } from '../lib/phone.js';
 import { formatMinor } from '../lib/money.js';
+import { normalisePhone } from '../lib/phone.js';
 import { events } from '../lib/events.js';
 import * as demo from '../services/mpesaDemo.js';
 
@@ -29,7 +29,11 @@ router.post('/',
   validate(z.object({
     amountMinor: z.coerce.number().int()
       .refine(v => v >= env.MIN_WITHDRAWAL_MINOR,
-        `Minimum withdrawal is ${formatMinor(env.MIN_WITHDRAWAL_MINOR, 'USD')}`),
+        /* Quoted in the money the customer typed in, not in the cents
+           the request carries. "Minimum withdrawal is USD 0.78" is a
+           true sentence that answers nobody's question. */
+        `Minimum withdrawal is ${formatMinor(
+          Math.round(env.MIN_WITHDRAWAL_MINOR * env.USD_RATE_KES), 'KES')}`),
     method: z.enum(['mpesa', 'bank']).default('mpesa'),
     phone: z.string().optional(),
     bank: z.object({
