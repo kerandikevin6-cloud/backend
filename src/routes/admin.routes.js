@@ -64,9 +64,18 @@ router.get('/users', async (req, res, next) => {
 
     let q = admin
       .from('profiles')
-      .select('id,email,display_name,phone,country,kyc_status,status,role,' +
+      .select('id,email,display_name,phone,country,kyc_status,status,role,tier,' +
               'referral_code,trades_count,created_at,last_seen_at', { count: 'exact' })
       .eq('role', 'customer')
+      /* VIPs first, newest first within each group. Ordered in the query
+         rather than in the console, because the list is paged: sorting a
+         page in the browser floats the VIPs on that page and leaves the
+         ones on page two exactly where they were, which looks like the
+         feature works until the day it matters.
+
+         'vip' sorts after 'standard' alphabetically, so descending is
+         what puts it on top. */
+      .order('tier', { ascending: false })
       .order('created_at', { ascending: false })
       .range(offset, offset + limit - 1);
 
