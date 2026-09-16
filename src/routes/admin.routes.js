@@ -924,6 +924,19 @@ function publicPayment(p, person) {
   };
 }
 
+/* One line naming where the money is going, whichever rail it is on.
+   The reviewer's screen used to assume a phone number and print a bare
+   "+" for anything else, which is worse than nothing on the one screen
+   where somebody is about to send money somewhere. */
+function destinationLabel(d) {
+  if (!d) return '';
+  if (d.phone) return '+' + d.phone;
+  if (d.last4) return 'Card •••• ' + d.last4 + (d.name ? ' · ' + d.name : '');
+  if (d.address) return (d.network || 'USDT') + ' · ' + d.address;
+  if (d.accountNumber) return d.accountNumber + (d.bankCode ? ' · ' + d.bankCode : '');
+  return '';
+}
+
 function publicWithdrawal(w, person) {
   return {
     id: w.id,
@@ -942,7 +955,8 @@ function publicWithdrawal(w, person) {
     amountMinor: Number(w.amount_minor),
     currency: w.currency,
     method: w.method,
-    destination: w.destination?.phone || w.destination?.accountNumber || '',
+    destination: destinationLabel(w.destination),
+    destinationPhone: w.destination?.phone || null,
     status: w.status,
     created: w.created_at,
     settled: w.settled_at

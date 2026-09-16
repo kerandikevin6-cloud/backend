@@ -34,13 +34,22 @@ router.post('/',
            true sentence that answers nobody's question. */
         `Minimum withdrawal is ${formatMinor(
           Math.round(env.MIN_WITHDRAWAL_MINOR * env.USD_RATE_KES), 'KES')}`),
-    method: z.enum(['mpesa', 'bank']).default('mpesa'),
+    method: z.enum(['mpesa', 'bank', 'card', 'usdt']).default('mpesa'),
     phone: z.string().optional(),
     bank: z.object({
       accountName: z.string().min(2),
       accountNumber: z.string().min(4),
       bankCode: z.string().min(2)
-    }).optional()
+    }).optional(),
+    /* Four digits and a name. The processor holds the card; this is only
+       so the operator and the customer are talking about the same one,
+       and a full card number is deliberately not accepted here. */
+    card: z.object({
+      name: z.string().min(2).max(80),
+      last4: z.string().regex(/^\d{4}$/)
+    }).optional(),
+    address: z.string().min(20).max(120).optional(),
+    network: z.string().max(40).optional()
   })),
   async (req, res, next) => {
     try {
@@ -76,6 +85,16 @@ router.post('/',
           phone: 'Enter the number in full, for example 0712345678'
         });
         destination = { phone };
+      } else if (req.body.method === 'card') {
+        if (!req.body.card) throw badRequest('Tell us which card to pay back to', {
+          card: 'Enter the name and the last 4 digits'
+        });
+        destination = req.body.card;
+      } else if (req.body.method === 'usdt') {
+        if (!req.body.address) throw badRequest('Enter the wallet address', {
+          address: 'A payout to the wrong address cannot be reversed'
+        });
+        destination = { address: req.body.address, network: req.body.network || 'TRC-20' };
       } else {
         if (!req.body.bank) throw badRequest('Enter the bank account details');
         destination = req.body.bank;
