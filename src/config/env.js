@@ -31,14 +31,14 @@ const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY ||
 /* ---------- product rules ----------
    Minor units (cents). 10000 = KES 100.00 */
 const RULES = {
-  MIN_DEPOSIT_MINOR: 1000,         /* KES 10 — lowered for live testing */
+  /* The rails collect shillings, so this is shillings: USD 5 at the rate
+     below. The customer types dollars and never sees this figure except
+     on the line that says what the phone will actually be debited. */
+  MIN_DEPOSIT_MINOR: 64500,        /* KES 645, i.e. USD 5 */
   MAX_DEPOSIT_MINOR: 15000000,     /* KES 150,000 */
   /* Withdrawals are requested in USD cents, which is what the balance is
-     held in, while the floor customers are shown is a round 100 KES. At
-     129 to the dollar that is 78 cents, and it is written here rather
-     than computed so a rate change cannot silently move a published
-     limit. */
-  MIN_WITHDRAWAL_MINOR: 78,        /* USD 0.78, i.e. KES 100 */
+     held in and, now, what the whole product is quoted in. */
+  MIN_WITHDRAWAL_MINOR: 1000,      /* USD 10 */
 
   /* Local currency per 1 USD. A fixed rate is fine to launch on, but it
      leaks value in one direction as the real rate moves — replace it

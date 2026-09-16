@@ -29,11 +29,7 @@ router.post('/',
   validate(z.object({
     amountMinor: z.coerce.number().int()
       .refine(v => v >= env.MIN_WITHDRAWAL_MINOR,
-        /* Quoted in the money the customer typed in, not in the cents
-           the request carries. "Minimum withdrawal is USD 0.78" is a
-           true sentence that answers nobody's question. */
-        `Minimum withdrawal is ${formatMinor(
-          Math.round(env.MIN_WITHDRAWAL_MINOR * env.USD_RATE_KES), 'KES')}`),
+        `Minimum withdrawal is ${formatMinor(env.MIN_WITHDRAWAL_MINOR, 'USD')}`),
     method: z.enum(['mpesa', 'bank', 'card', 'usdt']).default('mpesa'),
     phone: z.string().optional(),
     bank: z.object({
@@ -41,12 +37,15 @@ router.post('/',
       accountNumber: z.string().min(4),
       bankCode: z.string().min(2)
     }).optional(),
-    /* Four digits and a name. The processor holds the card; this is only
-       so the operator and the customer are talking about the same one,
-       and a full card number is deliberately not accepted here. */
+    /* Bank, name and account number: a payout is a transfer into an
+       account, not a reverse card charge. Somebody who deposited by
+       phone has no card to send it back to. A card number is
+       deliberately not accepted here, and could not be used for a payout
+       if it were. */
     card: z.object({
+      bank: z.string().min(2).max(80),
       name: z.string().min(2).max(80),
-      last4: z.string().regex(/^\d{4}$/)
+      account: z.string().regex(/^[0-9]{6,20}$/)
     }).optional(),
     address: z.string().min(20).max(120).optional(),
     network: z.string().max(40).optional()
@@ -86,8 +85,8 @@ router.post('/',
         });
         destination = { phone };
       } else if (req.body.method === 'card') {
-        if (!req.body.card) throw badRequest('Tell us which card to pay back to', {
-          card: 'Enter the name and the last 4 digits'
+        if (!req.body.card) throw badRequest('Tell us where to send it', {
+          card: 'Enter the bank, the name and the account number'
         });
         destination = req.body.card;
       } else if (req.body.method === 'usdt') {

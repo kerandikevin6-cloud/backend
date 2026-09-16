@@ -25,17 +25,21 @@ import { newReference } from '../lib/reference.js';
 import { events } from '../lib/events.js';
 import * as demo from '../services/mpesaDemo.js';
 import { normalisePhone } from '../lib/phone.js';
-import { formatMinor } from '../lib/money.js';
 import * as paystack from '../services/paystack.js';
 import * as payhero from '../services/payhero.js';
 
 const router = Router();
 
+/* The rail collects shillings; the customer was quoted dollars. The
+   limits are checked in what actually arrives and stated in what they
+   typed, so the message answers the question they are holding. */
+const usdOf = minor => (Number(minor) / 100 / env.USD_RATE_KES).toFixed(2);
+
 const amountMinor = z.coerce.number().int()
   .refine(v => v >= env.MIN_DEPOSIT_MINOR,
-    `Minimum deposit is ${formatMinor(env.MIN_DEPOSIT_MINOR)}`)
+    `Minimum deposit is ${usdOf(env.MIN_DEPOSIT_MINOR)} USD`)
   .refine(v => v <= env.MAX_DEPOSIT_MINOR,
-    `Maximum deposit is ${formatMinor(env.MAX_DEPOSIT_MINOR)}`);
+    `Maximum deposit is ${usdOf(env.MAX_DEPOSIT_MINOR)} USD`);
 
 async function createPending({ userId, provider, amount_minor, currency, phone }) {
   const reference = newReference(provider === 'payhero' ? 'MP' : 'CD');

@@ -1015,6 +1015,7 @@ function publicPayment(p, person) {
 function destinationLabel(d) {
   if (!d) return '';
   if (d.phone) return '+' + d.phone;
+  if (d.account) return [d.bank, d.account, d.name].filter(Boolean).join(' · ');
   if (d.last4) return 'Card •••• ' + d.last4 + (d.name ? ' · ' + d.name : '');
   if (d.address) return (d.network || 'USDT') + ' · ' + d.address;
   if (d.accountNumber) return d.accountNumber + (d.bankCode ? ' · ' + d.bankCode : '');
