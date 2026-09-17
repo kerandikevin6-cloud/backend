@@ -4,20 +4,30 @@
    Read and record settled contracts, so a person's history follows them
    between devices instead of living in one browser's localStorage.
 
-   What this is not: a source of truth about money. Contracts are still
-   decided in the browser, so a row here is the client's account of what
-   happened. It is recorded, shown back, and never allowed near a
-   balance — see the note at the top of sql/007_trades.sql.
+   Contracts are still decided in the browser, so a row here is the
+   client's account of what happened. It used to stop there — the row was
+   recorded and never allowed near a balance — which meant a loss never
+   reached the server and a withdrawal was held against the deposit, so
+   the business paid out money the customer had already lost.
 
-   Both routes run as the signed-in user through req.db, not through the
-   service role, so row level security is what enforces "your own" rather
-   than a filter in this file that somebody could later forget.
+   Settled trades on the real account now move the balance, through
+   settle_trade(), which checks the arithmetic it can check and cannot
+   check the one thing that matters most. Read the header of
+   sql/014_trade_balance.sql before relying on any of it.
+
+   The list and the record both run as the signed-in user through req.db,
+   so row level security enforces "your own" rather than a filter in this
+   file that somebody could later forget. The balance movement is the
+   exception: it goes through the service role, because a customer's own
+   token must never be able to call a function that credits them.
    ============================================================ */
 import { Router } from 'express';
 import { z } from 'zod';
+import { admin } from '../lib/supabase.js';
 import { requireAuth } from '../middleware/auth.js';
 import { validate } from '../middleware/validate.js';
 import { HttpError } from '../lib/errors.js';
+import { events } from '../lib/events.js';
 
 const router = Router();
 
@@ -153,10 +163,52 @@ router.post('/',
 
       if (error) throw new HttpError(500, 'record_failed', error.message);
 
+      /* Now the money. Only contracts on the real account, only ones
+         this call actually inserted — a re-send returns nothing from the
+         upsert above, and settle_trade is idempotent besides, so a
+         replay cannot pay the same win twice.
+
+         Applied one at a time rather than in a batch: a contract the
+         function refuses is a contract worth naming in the logs, and one
+         bad row must not take the rest of somebody's history down with
+         it. */
+      let balance = null;
+      const refused = [];
+
+      for (const row of (data || [])) {
+        if (row.account_kind !== 'real') continue;
+        const { data: after, error: moveError } = await admin.rpc('settle_trade', {
+          p_user_id: req.user.id,
+          p_client_ref: row.client_ref,
+          p_type: row.contract_type,
+          p_stake_minor: Number(row.stake_minor),
+          p_payout_minor: Number(row.payout_minor),
+          p_won: row.status === 'won'
+        });
+
+        if (moveError) {
+          refused.push({ ref: row.client_ref, reason: moveError.message });
+          events.error('trades', 'Trade not applied to the balance: ' + moveError.message, {
+            userId: req.user.id,
+            context: {
+              clientRef: row.client_ref, type: row.contract_type,
+              stakeMinor: Number(row.stake_minor), payoutMinor: Number(row.payout_minor),
+              status: row.status
+            }
+          });
+          continue;
+        }
+        balance = after == null ? balance : Number(after);
+      }
+
       res.status(201).json({
         ok: true,
         recorded: (data || []).length,
-        sent: rows.length
+        sent: rows.length,
+        /* The balance after, so the terminal can correct itself without
+           a second round trip. */
+        balanceMinor: balance,
+        refused: refused.length ? refused : undefined
       });
     } catch (err) { next(err); }
   });

@@ -16,9 +16,12 @@
 alter table public.payments
   drop constraint if exists payments_provider_check;
 
+-- Every provider that has ever been written, not just the new one. 008 added
+-- 'mpesa_demo' for the VIP handset rail; leaving it out here is why this
+-- migration failed the first time it was run against a database that had one.
 alter table public.payments
   add constraint payments_provider_check
-  check (provider in ('paystack', 'payhero', 'manual', 'usdt'));
+  check (provider in ('paystack', 'payhero', 'manual', 'mpesa_demo', 'usdt'));
 
 -- One hash, one credit. Without this, the same transfer pasted twice is two
 -- pending rows, and two people crediting them is the account paid twice for
