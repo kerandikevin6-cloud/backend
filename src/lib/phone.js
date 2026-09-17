@@ -20,7 +20,16 @@ function countryOf(digits) {
 }
 
 export function normalisePhone(input, country = 'KE') {
-  let digits = String(input || '').replace(/\D/g, '');
+  const raw = String(input || '');
+  /* Written with its country code by the caller. The payout field sends
+     every number this way, and for a country outside the seven below
+     that is all we can check: there is no length rule here for Portugal
+     and inventing one would reject real numbers. E.164 allows fifteen
+     digits including the code, and nothing shorter than eight is a
+     phone number with a country code on it. */
+  const international = raw.trim().startsWith('+');
+
+  let digits = raw.replace(/\D/g, '');
   if (digits.startsWith('00')) digits = digits.slice(2);
 
   /* A number sent in full carries its own country, and that beats the
@@ -30,6 +39,10 @@ export function normalisePhone(input, country = 'KE') {
      exist. */
   const declared = countryOf(digits);
   if (declared) return digits;
+
+  if (international) {
+    return digits.length >= 8 && digits.length <= 15 ? digits : null;
+  }
 
   const dial = DIAL[country] || DIAL.KE;
   const want = LEN[country] || 9;
