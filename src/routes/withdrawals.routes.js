@@ -32,6 +32,9 @@ router.post('/',
         `Minimum withdrawal is ${formatMinor(env.MIN_WITHDRAWAL_MINOR, 'USD')}`),
     method: z.enum(['mpesa', 'bank', 'card', 'usdt']).default('mpesa'),
     phone: z.string().optional(),
+    /* The country the customer picked on the field. Only a hint: the
+       number is normalised from its own dialling code first. */
+    country: z.string().length(2).optional(),
     bank: z.object({
       accountName: z.string().min(2),
       accountNumber: z.string().min(4),
@@ -79,7 +82,9 @@ router.post('/',
 
       let destination;
       if (req.body.method === 'mpesa') {
-        const phone = normalisePhone(req.body.phone || profile.phone, profile.country || 'KE');
+        const phone = normalisePhone(
+          req.body.phone || profile.phone,
+          req.body.country || profile.country || 'KE');
         if (!phone) throw badRequest('We need the M-Pesa number to pay out to', {
           phone: 'Enter the number in full, for example 0712345678'
         });
