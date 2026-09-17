@@ -21,7 +21,10 @@ export function formatMinor(minor, currency = 'KES') {
 /* Local currency in, trading balance (USD) out. A fixed rate is fine for
    launch, but swap this for a rates feed before volumes grow — a stale
    rate is a slow leak in one direction or the other. */
-const RATES = { KES: () => env.USD_RATE_KES, USD: () => 1 };
+/* USDT is quoted one for one with the dollar. It is written here rather
+   than assumed at the call site, so a rail added later cannot silently
+   fall through to the shilling rate. */
+const RATES = { KES: () => env.USD_RATE_KES, USD: () => 1, USDT: () => 1 };
 
 export function localToUsdMinor(amountMinor, currency = 'KES') {
   const rate = (RATES[currency] || RATES.KES)();

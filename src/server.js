@@ -112,7 +112,16 @@ app.get('/config', (_req, res) => {
     minDepositMinor: env.MIN_DEPOSIT_MINOR,
     maxDepositMinor: env.MAX_DEPOSIT_MINOR,
     minWithdrawalMinor: env.MIN_WITHDRAWAL_MINOR,
-    usdRateKes: env.USD_RATE_KES
+    usdRateKes: env.USD_RATE_KES,
+    /* The deposit address is public by nature: it is what people send
+       money to. Served from here rather than hardcoded in the site so
+       changing wallets is one environment variable, not a deploy of
+       every page. */
+    usdt: {
+      address: env.USDT_ADDRESS,
+      network: env.USDT_NETWORK,
+      minMinor: env.MIN_USDT_MINOR
+    }
   });
 });
 

@@ -45,6 +45,14 @@ const RULES = {
      with a rates feed before volumes grow. */
   USD_RATE_KES: 129,
 
+  /* The wallet USDT deposits are sent to, and the only network we accept.
+     One address and one chain on purpose: a customer choosing a network
+     from a menu is a customer who can choose the wrong one, and USDT
+     sent over the wrong chain is gone. */
+  USDT_ADDRESS: process.env.USDT_ADDRESS || 'TXqLJrvZc9ouyVPai66WR55dvDVetR83BH',
+  USDT_NETWORK: 'TRC-20',
+  MIN_USDT_MINOR: 500,             /* USD 5, and USDT is quoted 1:1 */
+
   /* Render puts a proxy in front of the service, so the real client IP
      arrives in X-Forwarded-For. Without this, rate limiting sees one
      address for every request and throttles everybody at once. */

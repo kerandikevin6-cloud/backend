@@ -148,6 +148,76 @@ router.post('/mpesa',
     }
   });
 
+/* ---------------- USDT, TRC-20 ----------------
+   No callback exists for this rail. Nobody tells us a transfer happened:
+   it lands in a wallet, and the only thing tying it to an account is the
+   customer saying that one was me. So this writes a pending row with the
+   hash on it and stops. Crediting is a person, after looking at the
+   chain — see admin POST /payments/:id/credit.
+
+   Nothing here touches a balance, which is the same rule the card and
+   mobile-money routes follow and the reason this file can be read in one
+   sitting. */
+router.post('/usdt',
+  requireAuth,
+  paymentLimiter,
+  validate(z.object({
+    amountMinor: z.coerce.number().int()
+      .refine(v => v >= env.MIN_USDT_MINOR,
+        `Minimum USDT deposit is ${(env.MIN_USDT_MINOR / 100).toFixed(2)} USDT`)
+      .refine(v => v <= 5000000, 'That is larger than we can take in one transfer'),
+    /* A Tron hash is 64 hex characters. Checked because a customer who
+       pastes the wrong thing waits for a credit that will never come,
+       and the person reviewing it has nothing to look up. */
+    txHash: z.string().trim().regex(/^[A-Fa-f0-9]{64}$/,
+      'That does not look like a TRC-20 transaction hash')
+  })),
+  async (req, res, next) => {
+    try {
+      const txHash = req.body.txHash.toLowerCase();
+
+      const { data: seen } = await admin
+        .from('payments')
+        .select('id,status')
+        .eq('provider', 'usdt')
+        .eq('raw->>txHash', txHash)
+        .maybeSingle();
+
+      if (seen) {
+        throw badRequest('That transaction has already been sent to us.', {
+          txHash: 'We are looking at this one already'
+        });
+      }
+
+      const payment = await createPending({
+        userId: req.user.id,
+        provider: 'usdt',
+        amount_minor: req.body.amountMinor,
+        currency: 'USDT'
+      });
+
+      await admin.from('payments')
+        .update({
+          provider_ref: txHash,
+          raw: { txHash, network: env.USDT_NETWORK, address: env.USDT_ADDRESS }
+        })
+        .eq('id', payment.id);
+
+      events.info('usdt', 'USDT deposit reported', {
+        userId: req.user.id,
+        reference: payment.reference,
+        context: { amountMinor: req.body.amountMinor, txHash }
+      });
+
+      res.status(202).json({
+        ok: true,
+        status: 'pending',
+        reference: payment.reference,
+        message: 'We are checking the transfer. It usually clears within the hour.'
+      });
+    } catch (err) { next(err); }
+  });
+
 /* ---------------- the VIP demo rail ----------------
    Where the Standard path raises a real STK push and waits for a
    callback, this takes the money off the handset and settles at once.

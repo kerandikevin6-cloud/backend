@@ -253,6 +253,60 @@ router.post('/payments/:id/recheck',
     } catch (err) { next(err); }
   });
 
+/* Credit a transfer somebody has confirmed on the chain.
+   
+   There is no provider to ask about a USDT deposit: the only evidence is
+   a hash and a wallet. So this is the one route in the product that
+   moves money into an account on a person's say-so, and it is deliberately
+   narrow — it only touches a pending row on the usdt rail, it settles
+   through the same database function every other deposit uses, and it
+   writes who did it.
+
+   The amount credited is the amount the customer declared. Whoever
+   presses this has to have checked that against the chain, because
+   nothing here can. */
+router.post('/payments/:id/credit',
+  requireRole('super_admin', 'admin', 'finance'),
+  validate(z.object({ note: z.string().max(300).optional() })),
+  async (req, res, next) => {
+    try {
+      const { data: payment } = await admin
+        .from('payments').select('*').eq('id', req.params.id).maybeSingle();
+      if (!payment) throw notFound('No such payment');
+
+      if (payment.provider !== 'usdt') {
+        throw badRequest('Only a USDT transfer is credited by hand. ' +
+          'Everything else settles from its provider.');
+      }
+      if (payment.status !== 'pending') {
+        throw conflict('That payment is already ' + payment.status + '.');
+      }
+
+      const { error } = await admin.rpc('settle_deposit', {
+        p_payment_id: payment.id,
+        p_provider_ref: payment.provider_ref,
+        p_credited_minor: Number(payment.amount_minor),
+        p_raw: { ...(payment.raw || {}), creditedBy: req.operator.id, note: req.body.note || null }
+      });
+      if (error) throw new HttpError(500, 'credit_failed', error.message);
+
+      await audit(req, 'payment.credit', payment.user_id, {
+        payment: payment.id, reference: payment.reference,
+        amountMinor: Number(payment.amount_minor), note: req.body.note || null
+      });
+
+      events.info('usdt', 'USDT deposit credited', {
+        userId: payment.user_id,
+        reference: payment.reference,
+        context: { amountMinor: Number(payment.amount_minor) }
+      });
+
+      const { data: fresh } = await admin
+        .from('payments').select('*').eq('id', payment.id).single();
+      res.json({ ok: true, payment: publicPayment(fresh) });
+    } catch (err) { next(err); }
+  });
+
 /* ---------------- withdrawals ---------------- */
 router.get('/withdrawals', async (req, res, next) => {
   try {
@@ -996,8 +1050,14 @@ function publicPayment(p, person) {
     userName: person?.display_name || null,
     userEmail: person?.email || null,
     provider: p.provider,
-    providerLabel: p.provider === 'payhero' ? 'M-Pesa' : 'Card',
-    method: p.provider === 'payhero' ? 'mpesa' : 'card',
+    providerLabel: p.provider === 'payhero' ? 'M-Pesa'
+      : p.provider === 'usdt' ? 'USDT' : 'Card',
+    method: p.provider === 'payhero' ? 'mpesa'
+      : p.provider === 'usdt' ? 'usdt' : 'card',
+    /* The hash is the whole of the evidence on a chain transfer, so it
+       goes to the screen where somebody decides whether to credit it. */
+    txHash: p.provider === 'usdt' ? (p.raw?.txHash || null) : null,
+    network: p.provider === 'usdt' ? (p.raw?.network || null) : null,
     amountMinor: Number(p.amount_minor),
     currency: p.currency,
     creditedMinor: p.credited_minor == null ? null : Number(p.credited_minor),
