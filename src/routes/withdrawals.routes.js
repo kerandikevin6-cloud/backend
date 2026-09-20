@@ -32,6 +32,10 @@ router.post('/',
         `Minimum withdrawal is ${formatMinor(env.MIN_WITHDRAWAL_MINOR, 'USD')}`),
     method: z.enum(['mpesa', 'bank', 'card', 'usdt']).default('mpesa'),
     phone: z.string().optional(),
+    /* "Pay it to the number on my account." The browser is not given
+       those digits back, so this is how it asks for them — the same
+       shape the deposit side uses. */
+    onFile: z.boolean().optional(),
     /* The country the customer picked on the field. Only a hint: the
        number is normalised from its own dialling code first. */
     country: z.string().length(2).optional(),
@@ -82,12 +86,19 @@ router.post('/',
 
       let destination;
       if (req.body.method === 'mpesa') {
+        /* Asked for the one on file, a number in the body is ignored
+           rather than preferred: the sheet that sends onFile has no
+           number to send, so anything arriving alongside it did not come
+           from the person pressing the button. */
+        const asked = req.body.onFile ? null : req.body.phone;
         const phone = normalisePhone(
-          req.body.phone || profile.phone,
+          asked || profile.phone,
           req.body.country || profile.country || 'KE');
-        if (!phone) throw badRequest('We need the M-Pesa number to pay out to', {
-          phone: 'Enter the number in full, for example 0712345678'
-        });
+        if (!phone) throw badRequest(
+          asked
+            ? 'We need the M-Pesa number to pay out to'
+            : 'There is no number on your account yet. Add one in Account.',
+          { phone: 'Enter the number in full, for example 0712345678' });
         destination = { phone };
       } else if (req.body.method === 'card') {
         if (!req.body.card) throw badRequest('Tell us where to send it', {
