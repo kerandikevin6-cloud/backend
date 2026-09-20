@@ -239,7 +239,12 @@ router.get('/session', requireAuth, async (req, res, next) => {
       ...row,
       phone: undefined,
       phone_masked: maskPhone(row.phone),
-      phone_set: !!row.phone
+      phone_set: !!row.phone,
+      /* The name an ID check reads, and whether it can still be edited.
+         The console screen needs both: a locked field that looks
+         editable is worse than one that says why it is not. */
+      legal_name: req.user.user_metadata?.full_name || null,
+      name_locked: row.kyc_status === 'verified'
     };
 
     const { data: accounts } = await req.db
@@ -250,6 +255,78 @@ router.get('/session', requireAuth, async (req, res, next) => {
     res.json({ ok: true, user: publicUser(req.user), profile, accounts: accounts || [] });
   } catch (err) { next(err); }
 });
+
+/* ---------------- the account ----------------
+   Two names, and they are not the same thing.
+
+   The legal name lives on the auth user as full_name and is what an ID
+   check is read against. The display name lives on the profile and is
+   what other people see in support chat and copy trading. Editing them
+   on one screen is right; storing them in one field would not be, since
+   one of them has to match a document and the other is a handle.
+
+   Once identity is verified the legal name stops being editable here. A
+   verified account whose name can be typed over is a verified account
+   that proves nothing, and the way back is a fresh check rather than a
+   form. The display name stays editable, because nothing was ever
+   checked against it.
+*/
+router.post('/profile',
+  requireAuth,
+  validate(z.object({
+    firstName: z.string().trim().max(40).optional(),
+    lastName: z.string().trim().max(40).optional(),
+    displayName: z.string().trim().min(1, 'Pick a name to show other traders').max(40).optional()
+  })),
+  async (req, res, next) => {
+    try {
+      const { firstName, lastName, displayName } = req.body;
+      const wantsLegal = firstName !== undefined || lastName !== undefined;
+
+      const { data: profile } = await req.db
+        .from('profiles').select('display_name,kyc_status').eq('id', req.user.id).single();
+
+      let fullName = req.user.user_metadata?.full_name || null;
+
+      if (wantsLegal) {
+        if (profile?.kyc_status === 'verified') {
+          throw badRequest(
+            'Your name is fixed once your identity is verified. Contact support to change it.',
+            { firstName: 'Locked by verification' });
+        }
+        const first = (firstName ?? '').trim();
+        const last = (lastName ?? '').trim();
+        if (!first) throw badRequest('Enter your first name', { firstName: 'Required' });
+        if (!last) throw badRequest('Enter your last name', { lastName: 'Required' });
+        /* A name with digits in it is not a name, and it is the one
+           thing an ID check will reject out of hand. */
+        if (/\d/.test(first + last)) {
+          throw badRequest('Names cannot contain numbers', { firstName: 'Letters only' });
+        }
+
+        fullName = `${first} ${last}`;
+        const { error } = await admin.auth.admin.updateUserById(req.user.id, {
+          user_metadata: { ...(req.user.user_metadata || {}), full_name: fullName }
+        });
+        if (error) throw new HttpError(400, 'profile_failed', error.message);
+      }
+
+      let shown = profile?.display_name || null;
+      if (displayName !== undefined) {
+        shown = displayName;
+        const { error } = await admin
+          .from('profiles').update({ display_name: shown }).eq('id', req.user.id);
+        if (error) throw new HttpError(500, 'profile_failed', error.message);
+      }
+
+      events.info('auth', 'Profile updated', {
+        userId: req.user.id,
+        context: { legalName: wantsLegal, displayName: displayName !== undefined }
+      });
+
+      res.json({ ok: true, name: fullName, displayName: shown });
+    } catch (err) { next(err); }
+  });
 
 /* ---------------- the deposit number ----------------
    The number a deposit is taken from. It is set at sign-up and changed
