@@ -72,7 +72,43 @@ const REASONS = {
   502: 'Rejected by the network'
 };
 
+/* What the key looks like, never what it is.
+   A refusal is the same 401 whether the key belongs to another app, was
+   truncated by a copy that caught only the visible half, or is a masked
+   row of dots somebody pasted off the dashboard. The length and the
+   prefix tell those apart at a glance and are not the secret: a key of
+   the right shape that is still refused belongs to a different app,
+   which is a different thing to go and fix.
+
+   Their keys are ~50 characters, usually with an atsk_ prefix on newer
+   accounts and bare hex on older ones, so the prefix is reported rather
+   than judged. */
+/* A header can only carry printable ASCII, and fetch throws rather than
+   sends when it cannot. The value that trips this is always the same
+   one: the row of dots the dashboard shows in place of the key, pasted
+   by somebody who could not see they had not copied the key. Caught
+   before the request, so the answer is that sentence rather than a
+   ByteString error nobody can act on. */
+function unusable() {
+  const key = env.AFRICASTALKING_API_KEY || '';
+  if (!/^[\x21-\x7e]+$/.test(key)) {
+    return 'The API key is not something that can be sent in a header ' +
+      '— it is probably the masked value from the dashboard, not the key';
+  }
+  return null;
+}
+
+function shape() {
+  const key = env.AFRICASTALKING_API_KEY || '';
+  const prefix = key.startsWith('atsk_') ? 'atsk_ prefix' : 'no atsk_ prefix';
+  const masked = /^[•*•.]+$/.test(key) ? ', and it is all dots — the dashboard masks the key, so it has to be copied from the reveal' : '';
+  return `configured: username "${env.AFRICASTALKING_USERNAME}", key ${key.length} chars, ${prefix}${masked}`;
+}
+
 export async function send(mobile, message) {
+  const bad = unusable();
+  if (bad) return { ok: false, status: 'refused', detail: bad };
+
   const body = new URLSearchParams({
     username: env.AFRICASTALKING_USERNAME,
     /* They want it international, with the plus. sms.js hands over bare
@@ -164,6 +200,9 @@ export async function send(mobile, message) {
    operator actually wants before a demo — a gateway with no credit is
    "live" by every other measure and will still send nothing. */
 export async function check() {
+  const bad = unusable();
+  if (bad) return { status: 'auth', detail: `${bad} — ${shape()}` };
+
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
   try {
@@ -186,8 +225,9 @@ export async function check() {
     if (res.status === 401 || res.status === 403) {
       return {
         status: 'auth',
-        detail: `${where} host refused the key (HTTP ${res.status}` +
-          `${text ? ': ' + text.replace(/\s+/g, ' ').slice(0, 90) : ''})`
+        detail: `${where} host refused it (HTTP ${res.status}` +
+          `${text ? ': ' + text.replace(/\s+/g, ' ').slice(0, 70) : ''})` +
+          ` — ${shape()}`
       };
     }
     if (res.status >= 500) return { status: 'down', detail: `HTTP ${res.status}` };
