@@ -35,7 +35,11 @@ export function configured() {
 const SHARED = 'AFRICASTKNG';
 
 export function sender() {
-  return env.AFRICASTALKING_SENDER_ID || SHARED;
+  /* Sandbox has no registered sender IDs and never will, so what a
+     message actually arrives as there is their shared shortcode
+     whatever is configured. Reporting the configured one would be the
+     console telling an operator something that is not true. */
+  return (isSandbox() ? '' : env.AFRICASTALKING_SENDER_ID) || SHARED;
 }
 
 /* A sandbox username only works against the sandbox host, and a live one
@@ -116,7 +120,16 @@ export async function send(mobile, message) {
     to: '+' + mobile,
     message
   });
-  if (env.AFRICASTALKING_SENDER_ID) body.set('from', env.AFRICASTALKING_SENDER_ID);
+  /* Not on sandbox. An alphanumeric sender ID is refused there every
+     time, and the refusal arrives as a 2xx with an empty recipient list
+     rather than an error — so a message sent with one simply vanishes,
+     which is a horrible thing to debug on the morning of a demo. The
+     sender is dropped instead, the message goes out under their shared
+     shortcode, and the test that was meant to prove the key works
+     proves it. */
+  if (env.AFRICASTALKING_SENDER_ID && !isSandbox()) {
+    body.set('from', env.AFRICASTALKING_SENDER_ID);
+  }
 
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
@@ -160,11 +173,18 @@ export async function send(mobile, message) {
     /* No recipient at all means it was not even attempted, and the
        summary line is the only thing that says why — usually an invalid
        number or a sender ID they will not accept. */
+    /* Nothing was even attempted, and the summary line is the only clue
+       as to why. Live, this is nearly always a sender ID that has not
+       been registered with the networks, so say so: the raw line reads
+       "Sent to 0/1 Total Cost: 0", which explains nothing to anybody. */
     if (!first) {
+      const why = env.AFRICASTALKING_SENDER_ID && !isSandbox()
+        ? ` — the sender ID "${env.AFRICASTALKING_SENDER_ID}" is probably not registered with the networks yet`
+        : '';
       return {
         ok: false,
         status: 'refused',
-        detail: data.Message || 'The gateway accepted nothing'
+        detail: (data.Message || 'The gateway accepted nothing') + why
       };
     }
 

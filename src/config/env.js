@@ -188,8 +188,11 @@ export const smsSource = celcomSet
   ? `Celcom, sender ${env.CELCOM_SHORTCODE}` +
     (atSet ? " (Africa's Talking is also set and is the standby)" : '')
   : atSet
-    ? `Africa's Talking${env.AFRICASTALKING_USERNAME === 'sandbox' ? ' (sandbox — messages reach their simulator, not a handset)' : ''}` +
-      `, sender ${env.AFRICASTALKING_SENDER_ID || 'AFRICASTKNG'}` +
+    ? (env.AFRICASTALKING_USERNAME === 'sandbox'
+        ? "Africa's Talking (sandbox — messages reach their simulator, not a handset), sender AFRICASTKNG" +
+          (env.AFRICASTALKING_SENDER_ID
+            ? ` (sandbox refuses a registered sender ID, so ${env.AFRICASTALKING_SENDER_ID} is not being sent)` : '')
+        : `Africa's Talking, sender ${env.AFRICASTALKING_SENDER_ID || 'AFRICASTKNG'}`) +
       (celcomPart ? ' — Celcom is half-set and is being ignored' : '')
     : celcomPart
       ? 'nothing — CELCOM_API_KEY, CELCOM_PARTNER_ID and CELCOM_SHORTCODE are all required together'

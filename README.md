@@ -239,10 +239,17 @@ Three things are worth knowing before a presentation:
   it. A wrong digit otherwise means a stranger gets a receipt for money
   that does not exist.
 * **Africa's Talking' sandbox delivers to nobody.** A username of
-  `sandbox` reaches their simulator and never a handset — fine for wiring
-  this up, useless in front of a room. Their live app is a different
-  username and a different key. Without a registered sender ID the texts
-  also arrive from `AFRICASTKNG`, their shared shortcode.
+  `sandbox` reaches their simulator at `simulator.africastalking.com` and
+  never a handset, however well the send goes — fine for wiring this up,
+  useless in front of a room. Their live app is a different username and
+  a different key.
+* **Sandbox refuses a sender ID**, always: it has none registered, and it
+  says so by answering 2xx with an empty recipient list rather than an
+  error, so a message sent with one vanishes. `AFRICASTALKING_SENDER_ID`
+  is therefore ignored on sandbox and the messages go out as
+  `AFRICASTKNG`. Live, an alphanumeric sender has to be applied for and
+  approved by the networks first, which takes days — until then the same
+  shared shortcode is what arrives.
 * **The sender can never be MPESA.** That sender ID is Safaricom's and
   both gateways will refuse it. So a message that arrives is always
   attributable to us, which is the line this rail should not cross: the
