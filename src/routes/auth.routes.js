@@ -12,7 +12,8 @@ import { requireAuth } from '../middleware/auth.js';
 import { authLimiter, resetLimiter } from '../middleware/rateLimit.js';
 import { badRequest, unauthorized, HttpError } from '../lib/errors.js';
 import { env } from '../config/env.js';
-import { normalisePhone } from '../lib/phone.js';
+import { normalisePhone, maskPhone } from '../lib/phone.js';
+import { events } from '../lib/events.js';
 
 const router = Router();
 
@@ -221,14 +222,25 @@ router.post('/change-password',
     } catch (err) { next(err); }
   });
 
-/* ---------------- session ---------------- */
+/* ---------------- session ----------------
+   The number goes out masked and never in full. The browser has no use
+   for the digits — the deposit rail reads them from the profile — and a
+   browser that never receives them cannot put them on a screen somebody
+   else is looking at, or leave them in a cache. */
 router.get('/session', requireAuth, async (req, res, next) => {
   try {
-    const { data: profile } = await req.db
+    const { data: row } = await req.db
       .from('profiles')
       .select('id,email,display_name,phone,country,kyc_status,referral_code,tier,demo_mode')
       .eq('id', req.user.id)
       .single();
+
+    const profile = row && {
+      ...row,
+      phone: undefined,
+      phone_masked: maskPhone(row.phone),
+      phone_set: !!row.phone
+    };
 
     const { data: accounts } = await req.db
       .from('accounts')
@@ -238,6 +250,62 @@ router.get('/session', requireAuth, async (req, res, next) => {
     res.json({ ok: true, user: publicUser(req.user), profile, accounts: accounts || [] });
   } catch (err) { next(err); }
 });
+
+/* ---------------- the deposit number ----------------
+   The number a deposit is taken from. It is set at sign-up and changed
+   here, because the alternative is a customer typing it in full on the
+   deposit sheet every time — which is the one moment they are in a
+   hurry, and a mistyped digit there is a prompt sent to a stranger's
+   handset.
+
+   Changing it needs the password. Not because the number can be used to
+   take anything — a deposit pulls money from the phone that approves it,
+   so a wrong number sends a prompt somebody else declines — but because
+   this is the number our messages go to, and a quietly changed one is
+   how a customer stops hearing from us without knowing why. */
+router.post('/phone',
+  requireAuth,
+  authLimiter,
+  validate(z.object({
+    phone: z.string().min(6, 'Enter your number'),
+    country: z.string().length(2).optional(),
+    password: z.string().min(1, 'Enter your password')
+  })),
+  async (req, res, next) => {
+    try {
+      const { data: profile } = await req.db
+        .from('profiles').select('country,email').eq('id', req.user.id).single();
+
+      const phone = normalisePhone(req.body.phone, req.body.country || profile?.country || 'KE');
+      if (!phone) {
+        throw badRequest('That number does not look right', {
+          phone: 'Enter it in full, for example 0712345678'
+        });
+      }
+
+      /* Checked by signing in with it rather than by comparing a hash we
+         do not hold: Supabase owns the password, so this is the only way
+         to ask it a question about one. */
+      const { error: wrong } = await anon.auth.signInWithPassword({
+        email: profile?.email || req.user.email,
+        password: req.body.password
+      });
+      if (wrong) {
+        throw badRequest('That password is not right', { password: 'Check and try again' });
+      }
+
+      const { error } = await admin
+        .from('profiles').update({ phone }).eq('id', req.user.id);
+      if (error) throw new HttpError(500, 'phone_failed', error.message);
+
+      events.info('auth', 'Deposit number changed', {
+        userId: req.user.id,
+        context: { to: maskPhone(phone) }
+      });
+
+      res.json({ ok: true, phoneMasked: maskPhone(phone) });
+    } catch (err) { next(err); }
+  });
 
 router.post('/refresh',
   validate(z.object({ refreshToken: z.string().min(10) })),

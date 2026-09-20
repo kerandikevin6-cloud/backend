@@ -66,22 +66,38 @@ async function createPending({ userId, provider, amount_minor, currency, phone }
 router.post('/mpesa',
   requireAuth,
   paymentLimiter,
+  /* Either a number typed on the sheet, or none at all — which means
+     "the one on my account". The browser is never given those digits
+     back, so it could not send them even if it wanted to; this is what
+     it sends instead. */
   validate(z.object({
     amountMinor,
-    phone: z.string().min(6, 'Enter your M-Pesa number'),
+    phone: z.string().min(6, 'Enter your M-Pesa number').optional(),
+    usePhoneOnFile: z.boolean().optional(),
     currency: z.string().length(3).default('KES')
   })),
   async (req, res, next) => {
     let payment;
     try {
       const { data: profile } = await admin
-        .from('profiles').select('country,display_name')
+        .from('profiles').select('country,display_name,phone')
         .eq('id', req.user.id).single();
 
-      const phone = normalisePhone(req.body.phone, profile?.country || 'KE');
-      if (!phone) throw badRequest('That phone number does not look right', {
-        phone: 'Enter the number in full, for example 0712345678'
-      });
+      const typed = req.body.phone && !req.body.usePhoneOnFile;
+      const source = typed ? req.body.phone : profile?.phone;
+
+      if (!source) {
+        throw badRequest('There is no number on your account yet', {
+          phone: 'Enter the number to pay from'
+        });
+      }
+
+      const phone = normalisePhone(source, profile?.country || 'KE');
+      if (!phone) throw badRequest(
+        typed
+          ? 'That phone number does not look right'
+          : 'The number saved on your account does not look right. Change it in Account.',
+        { phone: 'Enter the number in full, for example 0712345678' });
 
       /* The fork. A VIP settles against the companion handset instead of
          against PayHero, and the customer's browser never knows the

@@ -53,3 +53,38 @@ export function normalisePhone(input, country = 'KE') {
   if (digits.length !== want) return null;
   return dial + digits;
 }
+
+/* ============================================================
+   Showing one back
+
+   A number on a screen is read by whoever is standing behind the
+   screen. Enough of it is kept for the owner to recognise their own —
+   the dialling code, the first digit, the last three — and the rest
+   goes, which is the same shape a bank statement uses and for the same
+   reason.
+
+   The masked form is what leaves the server. The full number is held
+   here and used here; a browser that never receives it cannot leak it,
+   and the deposit rail reads it from the profile rather than being
+   handed it back by the page.
+   ============================================================ */
+const DIALS = Object.values(DIAL).sort((a, b) => b.length - a.length);
+
+export function maskPhone(input) {
+  const digits = String(input || '').replace(/\D/g, '');
+  if (!digits) return null;
+  /* Too short to hide anything in: everything but the last two goes,
+     rather than pretending to mask a number that has nothing spare. */
+  if (digits.length < 7) return '•'.repeat(Math.max(0, digits.length - 2)) + digits.slice(-2);
+
+  const dial = DIALS.find(d => digits.startsWith(d)) || '';
+  const rest = digits.slice(dial.length);
+  const head = rest.slice(0, 1);
+  const tail = rest.slice(-3);
+  const hidden = Math.max(0, rest.length - head.length - tail.length);
+
+  /* One unbroken run of dots rather than grouped ones: grouping implies
+     a shape the hidden digits may not have, and somebody checking their
+     own number should count nothing. */
+  return (dial ? '+' + dial + ' ' : '') + head + '•'.repeat(hidden) + ' ' + tail;
+}
