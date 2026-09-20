@@ -86,10 +86,29 @@ router.post('/signup',
         }
       }
 
+      /* Supabase withholds a session when the project has email
+         confirmation switched on. It also withholds one on some
+         configurations where no confirmation email is ever sent, and
+         then the customer is told to check an inbox nothing is coming
+         to — an account they cannot get into, created successfully.
+
+         So rather than trusting the absence of a session, ask: sign in
+         with what was just typed. If the project wants a confirmation
+         that attempt fails and the message stands; if it does not, the
+         account is already usable and they go straight to the terminal.
+         Either way it is the server that finds out, not the customer. */
+      let session = data.session;
+      if (!session) {
+        const { data: signedIn } = await anon.auth.signInWithPassword({
+          email: mail, password: pass
+        });
+        if (signedIn?.session) session = signedIn.session;
+      }
+
       res.status(201).json({
         ok: true,
-        needsConfirmation: !data.session,
-        session: data.session ? publicSession(data.session) : null,
+        needsConfirmation: !session,
+        session: session ? publicSession(session) : null,
         user: data.user ? { id: data.user.id, email: data.user.email } : null
       });
     } catch (err) { next(err); }
@@ -335,23 +354,25 @@ router.post('/profile',
    hurry, and a mistyped digit there is a prompt sent to a stranger's
    handset.
 
-   Changing it needs the password. Not because the number can be used to
-   take anything — a deposit pulls money from the phone that approves it,
-   so a wrong number sends a prompt somebody else declines — but because
-   this is the number our messages go to, and a quietly changed one is
-   how a customer stops hearing from us without knowing why. */
+   No password. It was asked for at first, on the grounds that this is
+   where our messages go — but the number cannot be used to take
+   anything (a deposit pulls from the handset that approves the prompt,
+   so a wrong number sends a prompt a stranger declines), and the check
+   refused everybody who signed in with Google and therefore has no
+   password to give. A guard that stops honest people and no attacker is
+   not a guard. The change is recorded in the event log instead, masked,
+   so there is a trail of when it moved and to what. */
 router.post('/phone',
   requireAuth,
   authLimiter,
   validate(z.object({
     phone: z.string().min(6, 'Enter your number'),
-    country: z.string().length(2).optional(),
-    password: z.string().min(1, 'Enter your password')
+    country: z.string().length(2).optional()
   })),
   async (req, res, next) => {
     try {
       const { data: profile } = await req.db
-        .from('profiles').select('country,email').eq('id', req.user.id).single();
+        .from('profiles').select('country,phone').eq('id', req.user.id).single();
 
       const phone = normalisePhone(req.body.phone, req.body.country || profile?.country || 'KE');
       if (!phone) {
@@ -360,24 +381,15 @@ router.post('/phone',
         });
       }
 
-      /* Checked by signing in with it rather than by comparing a hash we
-         do not hold: Supabase owns the password, so this is the only way
-         to ask it a question about one. */
-      const { error: wrong } = await anon.auth.signInWithPassword({
-        email: profile?.email || req.user.email,
-        password: req.body.password
-      });
-      if (wrong) {
-        throw badRequest('That password is not right', { password: 'Check and try again' });
-      }
-
       const { error } = await admin
         .from('profiles').update({ phone }).eq('id', req.user.id);
       if (error) throw new HttpError(500, 'phone_failed', error.message);
 
+      /* Both ends of the move, masked. Which number it was is the first
+         thing anybody asks when a prompt goes somewhere unexpected. */
       events.info('auth', 'Deposit number changed', {
         userId: req.user.id,
-        context: { to: maskPhone(phone) }
+        context: { from: maskPhone(profile?.phone) || 'none', to: maskPhone(phone) }
       });
 
       res.json({ ok: true, phoneMasked: maskPhone(phone) });
