@@ -88,17 +88,30 @@ const schema = z.object({
   PAYHERO_BASIC_TOKEN: z.string().optional().default(''),
   PAYHERO_CHANNEL_ID: z.string().optional().default(''),
 
-  /* Celcom Africa: the SMS gateway the demo rail texts from. Optional
-     by design — with none of these set the rail runs exactly as before,
-     silently, which is what a laptop with no .env should do rather than
-     refusing to boot over a message nobody is waiting for.
+  /* The SMS gateways the demo rail texts from. Both are optional and
+     both are optional together — with none of it set the rail runs
+     exactly as before, silently, which is what a laptop with no .env
+     should do rather than refusing to boot over a message nobody is
+     waiting for.
 
-     The shortcode is the sender ID Celcom has registered for this
-     account. It is whatever was approved (NOVI, NOVIMARKETS); it can
+     Celcom is preferred when both are configured; see services/sms.js,
+     which holds that order in one place. */
+
+  /* Celcom Africa. The shortcode is the sender ID they have registered
+     for this account: whatever was approved (NOVI, NOVIMARKETS). It can
      never be MPESA, which belongs to Safaricom. */
   CELCOM_API_KEY: z.string().optional().default(''),
   CELCOM_PARTNER_ID: z.string().optional().default(''),
-  CELCOM_SHORTCODE: z.string().optional().default('')
+  CELCOM_SHORTCODE: z.string().optional().default(''),
+
+  /* Africa's Talking. The username decides which of their two worlds the
+     key belongs to: "sandbox" is their test app, and a message sent
+     through it reaches their simulator and never a handset. The sender
+     ID is optional and messages go out as AFRICASTKNG without one, which
+     is fine for a test and wrong for a demo. */
+  AFRICASTALKING_USERNAME: z.string().optional().default(''),
+  AFRICASTALKING_API_KEY: z.string().optional().default(''),
+  AFRICASTALKING_SENDER_ID: z.string().optional().default('')
 });
 
 /* ---------- URL fallbacks ----------
@@ -136,14 +149,31 @@ export const env = {
   CELCOM_BASE_URL: 'https://isms.celcomafrica.com/api/services'
 };
 
-/* Whether the demo rail can text at all, and why not when it cannot.
-   Printed at boot next to the PayHero line, because "the messages did
-   not arrive" is asked far more often than it is diagnosed. */
-export const smsSource = env.CELCOM_API_KEY && env.CELCOM_PARTNER_ID && env.CELCOM_SHORTCODE
-  ? `Celcom, sender ${env.CELCOM_SHORTCODE}`
-  : (env.CELCOM_API_KEY || env.CELCOM_PARTNER_ID || env.CELCOM_SHORTCODE)
-    ? 'partly configured — CELCOM_API_KEY, CELCOM_PARTNER_ID and CELCOM_SHORTCODE are all required, no messages will be sent'
-    : 'nothing — the demo rail will move money silently';
+/* Which gateway the demo rail will text through, and why none when
+   there is none. Printed at boot next to the PayHero line, because "the
+   messages did not arrive" is asked far more often than it is diagnosed,
+   and half-set credentials are the usual reason.
+
+   The order here has to match the list in services/sms.js. It is two
+   providers and one line, so it is repeated rather than imported: this
+   file is read before anything else is loaded. */
+const celcomSet = !!(env.CELCOM_API_KEY && env.CELCOM_PARTNER_ID && env.CELCOM_SHORTCODE);
+const celcomPart = !!(env.CELCOM_API_KEY || env.CELCOM_PARTNER_ID || env.CELCOM_SHORTCODE);
+const atSet = !!(env.AFRICASTALKING_USERNAME && env.AFRICASTALKING_API_KEY);
+const atPart = !!(env.AFRICASTALKING_USERNAME || env.AFRICASTALKING_API_KEY);
+
+export const smsSource = celcomSet
+  ? `Celcom, sender ${env.CELCOM_SHORTCODE}` +
+    (atSet ? " (Africa's Talking is also set and is the standby)" : '')
+  : atSet
+    ? `Africa's Talking${env.AFRICASTALKING_USERNAME === 'sandbox' ? ' (sandbox — messages reach their simulator, not a handset)' : ''}` +
+      `, sender ${env.AFRICASTALKING_SENDER_ID || 'AFRICASTKNG'}` +
+      (celcomPart ? ' — Celcom is half-set and is being ignored' : '')
+    : celcomPart
+      ? 'nothing — CELCOM_API_KEY, CELCOM_PARTNER_ID and CELCOM_SHORTCODE are all required together'
+      : atPart
+        ? 'nothing — AFRICASTALKING_USERNAME and AFRICASTALKING_API_KEY are required together'
+        : 'nothing — the demo rail will move money silently';
 
 export const isProd = env.NODE_ENV === 'production';
 

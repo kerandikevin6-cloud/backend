@@ -17,7 +17,7 @@
    ============================================================ */
 import { admin } from '../lib/supabase.js';
 import { env, payheroToken } from '../config/env.js';
-import { checkSms } from './celcom.js';
+import { checkSms } from './sms.js';
 
 const TIMEOUT_MS = 6000;
 

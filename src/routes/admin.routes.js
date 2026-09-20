@@ -11,7 +11,7 @@ import { notFound, badRequest, conflict, HttpError } from '../lib/errors.js';
 import { reconcile } from './deposits.routes.js';
 import { checkAll } from '../services/health.js';
 import * as demo from '../services/mpesaDemo.js';
-import { sendSms, smsConfigured, smsSender } from '../services/celcom.js';
+import { sendSms, smsConfigured, smsSender, smsProvider } from '../services/sms.js';
 import { testMessage } from '../services/mpesaSms.js';
 import { events } from '../lib/events.js';
 import { env, corsOrigins, payheroAuthSource } from '../config/env.js';
@@ -962,8 +962,9 @@ router.post('/users/:id/wallet/test-sms',
   async (req, res, next) => {
     try {
       if (!smsConfigured()) {
-        throw badRequest('No SMS gateway is configured. Set CELCOM_API_KEY, ' +
-          'CELCOM_PARTNER_ID and CELCOM_SHORTCODE on the API.');
+        throw badRequest('No SMS gateway is configured. Set either the three ' +
+          'CELCOM_ settings or AFRICASTALKING_USERNAME and ' +
+          'AFRICASTALKING_API_KEY on the API.');
       }
 
       const wallet = await demo.walletFor(req.params.id);
@@ -978,7 +979,7 @@ router.post('/users/:id/wallet/test-sms',
 
       const out = await sendSms(to, testMessage(wallet.holderName));
       await audit(req, 'wallet.test_sms', req.params.id, {
-        to, status: out.status
+        to, status: out.status, provider: out.provider || null
       });
 
       if (!out.ok) {
@@ -991,6 +992,7 @@ router.post('/users/:id/wallet/test-sms',
         ok: out.ok,
         status: out.status,
         detail: out.detail,
+        provider: out.provider || smsProvider(),
         sender: smsSender(),
         to
       });

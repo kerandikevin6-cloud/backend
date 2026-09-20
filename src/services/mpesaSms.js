@@ -14,11 +14,11 @@
 
    What this is not: it is not a way to make a prop balance look like
    money to somebody who did not ask to see a demo. The sender ID is
-   whatever Celcom has registered for this account — never MPESA, which
-   is Safaricom's and cannot be sent from anyway — so a message that
-   arrives is attributable to us. See the note in mpesaDemo.js.
+   whatever the gateway has registered for this account — never MPESA,
+   which is Safaricom's and cannot be sent from anyway — so a message
+   that arrives is attributable to us. See the note in mpesaDemo.js.
    ============================================================ */
-import { sendSmsLogged, smsConfigured } from './celcom.js';
+import { sendSmsLogged, smsConfigured } from './sms.js';
 import { events } from '../lib/events.js';
 
 /* Who the handset sees on the other side of the transaction. The

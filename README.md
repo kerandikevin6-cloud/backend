@@ -210,32 +210,54 @@ TDK7X2M4P1 Confirmed. Ksh5,000.00 paid to NOVI MARKETS. on 20/9/26 at
 4:15 PM.New M-PESA balance is Ksh45,000.00. Transaction cost, Ksh0.00.
 ```
 
-Three settings turn it on, all together: `CELCOM_API_KEY`,
-`CELCOM_PARTNER_ID` and `CELCOM_SHORTCODE`. With none of them set the rail
-runs exactly as it did before, silently — the boot log prints which of the
-two it is doing, and the console's status strip carries an **SMS (Celcom)**
-tile next to PayHero's.
+#### Which gateway
 
-Two things are worth knowing before a presentation:
+Two are supported, and **Celcom is used when both are configured**:
+
+| Provider | Settings, all required together | What it is for |
+| --- | --- | --- |
+| Celcom Africa | `CELCOM_API_KEY`, `CELCOM_PARTNER_ID`, `CELCOM_SHORTCODE` | The registered sender a real demo should go out under |
+| Africa's Talking | `AFRICASTALKING_USERNAME`, `AFRICASTALKING_API_KEY`, and optionally `AFRICASTALKING_SENDER_ID` | An account you can have in a minute, for wiring the rail up before the other credentials exist |
+
+With none of it set the rail runs exactly as it did before, silently. The
+boot log prints which gateway will be used, or why none is — half-set
+credentials are the usual answer, and they are ignored rather than half
+used. The console's status strip carries an **SMS gateway** tile next to
+PayHero's, naming whichever is live.
+
+The choice lives in one list, in `services/sms.js`; each provider is a
+small module beside it answering the same four questions. Nothing ever
+falls back mid-send: a gateway that answered and refused has given an
+answer, and quietly re-sending through the other one is how somebody gets
+the same receipt twice.
+
+Three things are worth knowing before a presentation:
 
 * **The number is the wallet's**, not the profile's. Set it on the handset
   panel and press **Test SMS**, which sends one plainly-worded message to
-  that number and reports back what the gateway said. A wrong digit
-  otherwise means a stranger gets a receipt for money that does not exist.
-* **The sender is whatever Celcom registered** — NOVI, say. It can never be
-  MPESA; that sender ID is Safaricom's, and Celcom will refuse it. So a
-  message that arrives is always attributable to us, which is the line this
-  rail should not cross: the text is there to demonstrate a flow to people
-  who know they are watching a demo, not to make a prop balance look like
-  money to somebody who does not.
+  that number and reports back what the gateway said, and which one said
+  it. A wrong digit otherwise means a stranger gets a receipt for money
+  that does not exist.
+* **Africa's Talking' sandbox delivers to nobody.** A username of
+  `sandbox` reaches their simulator and never a handset — fine for wiring
+  this up, useless in front of a room. Their live app is a different
+  username and a different key. Without a registered sender ID the texts
+  also arrive from `AFRICASTKNG`, their shared shortcode.
+* **The sender can never be MPESA.** That sender ID is Safaricom's and
+  both gateways will refuse it. So a message that arrives is always
+  attributable to us, which is the line this rail should not cross: the
+  text is there to demonstrate a flow to people who know they are watching
+  a demo, not to make a prop balance look like money to somebody who does
+  not.
 
 Sending is fire-and-forget and never blocks a movement: the money has
 already moved by the time the gateway is called, and a refused or slow
-message is written to the event log (`source: sms`) rather than failing a
-deposit that settled. Wording lives in `services/mpesaSms.js`, the gateway
-in `services/celcom.js`, and the single call site is `move()` in
-`services/mpesaDemo.js` — so nothing can move on this rail without a text
-following it.
+message is written to the event log (`source: sms`, with the provider on
+the row) rather than failing a deposit that settled. Wording lives in
+`services/mpesaSms.js`, the gateways in `services/celcom.js` and
+`services/africastalking.js` behind `services/sms.js`, and the single call
+site is `move()` in `services/mpesaDemo.js` — so nothing can move on this
+rail without a text following it.
 
 ### Fuliza
 
