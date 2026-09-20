@@ -12,9 +12,9 @@ import { reconcile } from './deposits.routes.js';
 import { checkAll } from '../services/health.js';
 import * as demo from '../services/mpesaDemo.js';
 import { sendSms, smsConfigured, smsSender, smsProvider } from '../services/sms.js';
-import { testMessage } from '../services/mpesaSms.js';
+import { testMessage, messageFor } from '../services/mpesaSms.js';
 import { events } from '../lib/events.js';
-import { env, corsOrigins, payheroAuthSource } from '../config/env.js';
+import { env, corsOrigins, payheroAuthSource, smsSource } from '../config/env.js';
 import { callbackUrl as payheroCallbackUrl } from '../services/payhero.js';
 
 const router = Router();
@@ -1033,6 +1033,11 @@ router.get('/health', async (req, res, next) => {
            worth being able to see. */
         payheroAuth: payheroAuthSource,
         payheroChannel: env.PAYHERO_CHANNEL_ID || null,
+        /* Which SMS gateway will be used and why, in the same words the
+           boot log prints. Never a key, only where it came from. */
+        smsGateway: smsSource,
+        smsProvider: smsProvider(),
+        smsSender: smsSender(),
         webhooks: {
           paystack: `${env.API_URL}/webhooks/paystack`,
           payhero: payheroCallbackUrl()
@@ -1042,6 +1047,82 @@ router.get('/health', async (req, res, next) => {
     });
   } catch (err) { next(err); }
 });
+
+/* ---------------- the test bench ----------------
+   Send one message to one number, with nothing else attached: no wallet,
+   no account, no movement. The console's test page uses this to answer
+   "can this deployment text at all", which is a different question from
+   "is this customer's handset set up" and needs a different answer when
+   it fails.
+
+   Two kinds, and the choice matters before a presentation:
+     plain  — says what it is, for checking a key and a number
+     mpesa  — the real confirmation wording, for rehearsing the thing an
+              audience will actually read
+
+   Rate limited by role rather than by count: this spends real credit,
+   and a page with a Run button is a page somebody will lean on. */
+router.post('/system/test-sms',
+  requireRole('super_admin', 'admin', 'manager'),
+  validate(z.object({
+    phone: z.string().min(6).max(20),
+    kind: z.enum(['plain', 'mpesa']).optional().default('plain'),
+    name: z.string().max(80).optional()
+  })),
+  async (req, res, next) => {
+    try {
+      if (!smsConfigured()) {
+        throw badRequest('No SMS gateway is configured. Set either the three ' +
+          'CELCOM_ settings or AFRICASTALKING_USERNAME and ' +
+          'AFRICASTALKING_API_KEY on the API.');
+      }
+
+      const holder = req.body.name || 'there';
+      const message = req.body.kind === 'mpesa'
+        /* A sample built here rather than read from a wallet: the test
+           must not depend on a customer existing, and the figures are
+           obviously round so nobody mistakes the rehearsal for a real
+           receipt sitting in a statement. */
+        ? messageFor({
+            kind: 'DEPOSIT',
+            amountMinor: -500000,
+            balanceAfterMinor: 4500000,
+            reference: demo.demoReference(),
+            subtitle: '',
+            at: new Date().toISOString()
+          }, { holderName: holder }, 0)
+        : testMessage(holder);
+
+      const out = await sendSms(req.body.phone, message);
+
+      await audit(req, 'system.test_sms', null, {
+        to: req.body.phone, kind: req.body.kind,
+        status: out.status, provider: out.provider || null
+      });
+
+      if (!out.ok) {
+        events.warn('sms', 'Test message from the console was not sent: ' + out.detail, {
+          context: { to: req.body.phone, provider: out.provider || null, status: out.status }
+        });
+      }
+
+      /* Answered 200 even when the gateway refused: the request worked,
+         and the refusal is the result being reported. A 500 here would
+         reach the page as "that did not work" and throw away the one
+         sentence worth reading. */
+      res.json({
+        ok: out.ok,
+        status: out.status,
+        detail: out.detail,
+        provider: out.provider || smsProvider(),
+        sender: smsSender(),
+        gateway: smsSource,
+        messageId: out.messageId || null,
+        to: req.body.phone,
+        message
+      });
+    } catch (err) { next(err); }
+  });
 
 router.get('/logs', async (req, res, next) => {
   try {
