@@ -15,6 +15,7 @@
    ============================================================ */
 import { admin } from '../lib/supabase.js';
 import { unauthorized, forbidden, badRequest, conflict, HttpError } from '../lib/errors.js';
+import { notifyMovement } from './mpesaSms.js';
 
 /* Named errors, so the deposit path can catch them by type and refund,
    and HttpError subclasses so anything that does not catch them still
@@ -126,7 +127,23 @@ export async function handsetView(wallet) {
 
 /* ---------------- movement ---------------- */
 
-export async function move({ userId, kind, amountMinor, direction, title, subtitle, reference }) {
+/**
+ * One movement, and the text that confirms it.
+ *
+ * Every rail on this side of the demo funnels through here — the
+ * handset's own buttons, a VIP's deposit, a payout, a refund — which is
+ * why the SMS is sent from here rather than from five call sites that
+ * would each forget it differently.
+ *
+ * The send is deliberately not awaited. The money has already moved by
+ * the time it starts, and a gateway that is slow or down must not hold
+ * up the response the handset is waiting on. Failures land in the event
+ * log, which is where an operator looks when a message did not arrive.
+ *
+ * @param {boolean} [notify=true]  false for a movement nobody should be
+ *        texted about — currently nothing, kept for the day there is one.
+ */
+export async function move({ userId, kind, amountMinor, direction, title, subtitle, reference, notify = true }) {
   const { data, error } = await admin.rpc('mpesa_demo_move', {
     p_user: userId,
     p_kind: kind,
@@ -143,12 +160,24 @@ export async function move({ userId, kind, amountMinor, direction, title, subtit
     if (m.includes('INSUFFICIENT_FUNDS')) throw new InsufficientFunds();
     throw new HttpError(500, 'move_failed', m);
   }
-  return {
+  const moved = {
     balanceMinor: Number(data.balanceMinor),
     fulizaUsedMinor: Number(data.fulizaUsedMinor),
     fulizaLimitMinor: Number(data.fulizaLimitMinor),
     tx: txShape(data.tx)
   };
+
+  if (notify) {
+    /* The wallet is re-read rather than cached on the way in: the phone
+       number is set in the console and may have changed since this
+       request started, and texting the previous holder of a number is
+       not a mistake worth saving a query for. */
+    walletFor(userId)
+      .then(wallet => (wallet ? notifyMovement(wallet, moved) : undefined))
+      .catch(() => undefined);
+  }
+
+  return moved;
 }
 
 export async function resetWallet(userId, balanceMinor) {

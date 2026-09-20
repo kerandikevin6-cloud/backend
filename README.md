@@ -191,10 +191,51 @@ the functions that move them.
 | `POST /mpesa/receive` | The handset | Device token |
 | `POST /mpesa/reset` | Between rehearsals | Device token |
 | `POST /deposits/mpesa` | A VIP's terminal | The normal customer token; the tier is checked server side |
+| `POST /admin/users/:id/wallet/test-sms` | An operator, before the demo | Staff token |
 
 The deposit endpoint is **the same one Standard accounts use**. The fork happens
 inside it, from the database, so the browser cannot ask to be on the demo rail
 and a customer demoted mid-session stops being on it immediately.
+
+### The confirmation texts
+
+The half of M-Pesa an audience actually recognises is the message that
+arrives a second after the PIN, so the rail sends one. Every movement —
+a deposit onto the trading balance, a payout back, an agent withdrawal, a
+reversal — is followed by a Safaricom-shaped SMS to the number on the
+wallet, through **Celcom Africa**:
+
+```
+TDK7X2M4P1 Confirmed. Ksh5,000.00 paid to NOVI MARKETS. on 20/9/26 at
+4:15 PM.New M-PESA balance is Ksh45,000.00. Transaction cost, Ksh0.00.
+```
+
+Three settings turn it on, all together: `CELCOM_API_KEY`,
+`CELCOM_PARTNER_ID` and `CELCOM_SHORTCODE`. With none of them set the rail
+runs exactly as it did before, silently — the boot log prints which of the
+two it is doing, and the console's status strip carries an **SMS (Celcom)**
+tile next to PayHero's.
+
+Two things are worth knowing before a presentation:
+
+* **The number is the wallet's**, not the profile's. Set it on the handset
+  panel and press **Test SMS**, which sends one plainly-worded message to
+  that number and reports back what the gateway said. A wrong digit
+  otherwise means a stranger gets a receipt for money that does not exist.
+* **The sender is whatever Celcom registered** — NOVI, say. It can never be
+  MPESA; that sender ID is Safaricom's, and Celcom will refuse it. So a
+  message that arrives is always attributable to us, which is the line this
+  rail should not cross: the text is there to demonstrate a flow to people
+  who know they are watching a demo, not to make a prop balance look like
+  money to somebody who does not.
+
+Sending is fire-and-forget and never blocks a movement: the money has
+already moved by the time the gateway is called, and a refused or slow
+message is written to the event log (`source: sms`) rather than failing a
+deposit that settled. Wording lives in `services/mpesaSms.js`, the gateway
+in `services/celcom.js`, and the single call site is `move()` in
+`services/mpesaDemo.js` — so nothing can move on this rail without a text
+following it.
 
 ### Fuliza
 

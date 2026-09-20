@@ -86,7 +86,19 @@ const schema = z.object({
   PAYHERO_API_USERNAME: z.string().optional().default(''),
   PAYHERO_API_PASSWORD: z.string().optional().default(''),
   PAYHERO_BASIC_TOKEN: z.string().optional().default(''),
-  PAYHERO_CHANNEL_ID: z.string().optional().default('')
+  PAYHERO_CHANNEL_ID: z.string().optional().default(''),
+
+  /* Celcom Africa: the SMS gateway the demo rail texts from. Optional
+     by design — with none of these set the rail runs exactly as before,
+     silently, which is what a laptop with no .env should do rather than
+     refusing to boot over a message nobody is waiting for.
+
+     The shortcode is the sender ID Celcom has registered for this
+     account. It is whatever was approved (NOVI, NOVIMARKETS); it can
+     never be MPESA, which belongs to Safaricom. */
+  CELCOM_API_KEY: z.string().optional().default(''),
+  CELCOM_PARTNER_ID: z.string().optional().default(''),
+  CELCOM_SHORTCODE: z.string().optional().default('')
 });
 
 /* ---------- URL fallbacks ----------
@@ -120,8 +132,18 @@ export const env = {
   ...RULES,
   SUPABASE_URL,
   SUPABASE_ANON_KEY,
-  PAYHERO_BASE_URL: 'https://backend.payhero.co.ke/api/v2'
+  PAYHERO_BASE_URL: 'https://backend.payhero.co.ke/api/v2',
+  CELCOM_BASE_URL: 'https://isms.celcomafrica.com/api/services'
 };
+
+/* Whether the demo rail can text at all, and why not when it cannot.
+   Printed at boot next to the PayHero line, because "the messages did
+   not arrive" is asked far more often than it is diagnosed. */
+export const smsSource = env.CELCOM_API_KEY && env.CELCOM_PARTNER_ID && env.CELCOM_SHORTCODE
+  ? `Celcom, sender ${env.CELCOM_SHORTCODE}`
+  : (env.CELCOM_API_KEY || env.CELCOM_PARTNER_ID || env.CELCOM_SHORTCODE)
+    ? 'partly configured — CELCOM_API_KEY, CELCOM_PARTNER_ID and CELCOM_SHORTCODE are all required, no messages will be sent'
+    : 'nothing — the demo rail will move money silently';
 
 export const isProd = env.NODE_ENV === 'production';
 

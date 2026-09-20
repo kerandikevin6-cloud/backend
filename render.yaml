@@ -28,6 +28,14 @@ services:
       # API_URL is not listed: it defaults to RENDER_EXTERNAL_URL, which
       # Render sets itself, so the payment callbacks always point at this
       # instance. Set it only if the API sits behind a custom domain.
+      # Celcom, for the demo rail's M-Pesa confirmation texts. Optional:
+      # unset means the rail moves money without texting anybody.
+      - key: CELCOM_API_KEY
+        sync: false
+      - key: CELCOM_PARTNER_ID
+        sync: false
+      - key: CELCOM_SHORTCODE
+        sync: false
       - key: CORS_ORIGINS      # your front end origins, comma separated
         sync: false
       - key: APP_URL           # defaults to the first CORS origin

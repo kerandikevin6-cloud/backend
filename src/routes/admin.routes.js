@@ -11,6 +11,8 @@ import { notFound, badRequest, conflict, HttpError } from '../lib/errors.js';
 import { reconcile } from './deposits.routes.js';
 import { checkAll } from '../services/health.js';
 import * as demo from '../services/mpesaDemo.js';
+import { sendSms, smsConfigured, smsSender } from '../services/celcom.js';
+import { testMessage } from '../services/mpesaSms.js';
 import { events } from '../lib/events.js';
 import { env, corsOrigins, payheroAuthSource } from '../config/env.js';
 import { callbackUrl as payheroCallbackUrl } from '../services/payhero.js';
@@ -943,6 +945,55 @@ router.post('/users/:id/wallet/reset',
         balanceMinor: req.body.balanceMinor ?? null
       });
       res.json({ ok: true, wallet });
+    } catch (err) { next(err); }
+  });
+
+/* A message to the wallet's own number, before the room fills up. It
+   proves three things at once that are otherwise only proved by the
+   demo itself failing: the Celcom key works, the sender ID is live, and
+   the number saved on the wallet is the one in the presenter's hand.
+
+   Awaited rather than fired and forgotten, unlike every other send on
+   this rail: the operator pressed a button to find out, so they are
+   told what happened, including when it went wrong. */
+router.post('/users/:id/wallet/test-sms',
+  requireRole('super_admin', 'admin', 'manager'),
+  validate(z.object({ phone: z.string().max(20).optional() })),
+  async (req, res, next) => {
+    try {
+      if (!smsConfigured()) {
+        throw badRequest('No SMS gateway is configured. Set CELCOM_API_KEY, ' +
+          'CELCOM_PARTNER_ID and CELCOM_SHORTCODE on the API.');
+      }
+
+      const wallet = await demo.walletFor(req.params.id);
+      if (!wallet) throw notFound('That account has no demo wallet yet');
+
+      const to = req.body.phone || wallet.phone;
+      if (!to) {
+        throw badRequest('This wallet has no phone number. Add one before testing.', {
+          phone: 'Required'
+        });
+      }
+
+      const out = await sendSms(to, testMessage(wallet.holderName));
+      await audit(req, 'wallet.test_sms', req.params.id, {
+        to, status: out.status
+      });
+
+      if (!out.ok) {
+        events.warn('sms', 'Test message refused: ' + out.detail, {
+          userId: req.params.id, context: { to }
+        });
+      }
+
+      res.json({
+        ok: out.ok,
+        status: out.status,
+        detail: out.detail,
+        sender: smsSender(),
+        to
+      });
     } catch (err) { next(err); }
   });
 

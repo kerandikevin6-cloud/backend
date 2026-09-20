@@ -17,6 +17,7 @@
    ============================================================ */
 import { admin } from '../lib/supabase.js';
 import { env, payheroToken } from '../config/env.js';
+import { checkSms } from './celcom.js';
 
 const TIMEOUT_MS = 6000;
 
@@ -137,8 +138,8 @@ export function checkPayments() {
 }
 
 export async function checkAll() {
-  const [supabase, paystack, payhero, payments] = await Promise.all([
-    checkSupabase(), checkPaystack(), checkPayhero(), checkPayments()
+  const [supabase, paystack, payhero, sms, payments] = await Promise.all([
+    checkSupabase(), checkPaystack(), checkPayhero(), checkSms(), checkPayments()
   ]);
-  return { supabase, paystack, payhero, payments };
+  return { supabase, paystack, payhero, sms, payments };
 }
