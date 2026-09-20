@@ -100,7 +100,12 @@ export async function send(mobile, message) {
     const text = await res.text();
 
     if (res.status === 401 || res.status === 403) {
-      return { ok: false, status: 'refused', detail: 'API key or username rejected' };
+      return {
+        ok: false,
+        status: 'refused',
+        detail: `${isSandbox() ? 'sandbox' : 'live'} host refused the key ` +
+          `(HTTP ${res.status}${text ? ': ' + text.replace(/\s+/g, ' ').slice(0, 90) : ''})`
+      };
     }
 
     let parsed = null;
@@ -169,14 +174,27 @@ export async function check() {
       signal: controller.signal
     });
 
+    /* Their own words, not ours. "API key rejected" is true and useless:
+       the same 401 comes back for a key from the wrong app, a key with a
+       stray space in it, and a live key sent to the sandbox host, and an
+       operator staring at a tile cannot tell those apart. Whatever they
+       said goes on the row, along with which host was asked — that pair
+       is usually the whole diagnosis. */
+    const text = await res.text();
+    const where = isSandbox() ? 'sandbox' : 'live';
+
     if (res.status === 401 || res.status === 403) {
-      return { status: 'auth', detail: 'API key or username rejected' };
+      return {
+        status: 'auth',
+        detail: `${where} host refused the key (HTTP ${res.status}` +
+          `${text ? ': ' + text.replace(/\s+/g, ' ').slice(0, 90) : ''})`
+      };
     }
     if (res.status >= 500) return { status: 'down', detail: `HTTP ${res.status}` };
 
-    const body = await res.json().catch(() => ({}));
+    let body = {};
+    try { body = JSON.parse(text); } catch { /* not fatal: only the balance */ }
     const balance = body?.UserData?.balance;
-    const where = isSandbox() ? 'sandbox' : 'live';
     return {
       status: 'live',
       detail: `Africa's Talking (${where}), sender ${sender()}` +

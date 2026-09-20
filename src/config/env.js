@@ -60,6 +60,11 @@ const RULES = {
   LOG_LEVEL: 'info'
 };
 
+/* Every credential below is trimmed on the way in. A key pasted into a
+   dashboard field arrives with a trailing space or a newline often
+   enough to be worth designing for, and the failure it causes is the
+   worst kind: the credential is correct, the service says it is not, and
+   nothing on either side can see the difference. */
 const schema = z.object({
   NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
   PORT: z.coerce.number().default(8080),
@@ -73,20 +78,20 @@ const schema = z.object({
   CORS_ORIGINS: z.string().default(''),
 
   /* Bypasses row level security. Server only, always. */
-  SUPABASE_SERVICE_ROLE_KEY: z.string().min(20),
+  SUPABASE_SERVICE_ROLE_KEY: z.string().trim().min(20),
 
   /* Paystack: the secret key is all that is needed. Transactions are
      created through the API with the amount, so there is no hosted
      payment page to configure, and nothing Paystack-shaped runs in the
      browser, so there is no public key to publish. */
-  PAYSTACK_SECRET_KEY: z.string().min(10),
+  PAYSTACK_SECRET_KEY: z.string().trim().min(10),
 
   /* PayHero: HTTP Basic. Either paste a ready-made token or give the
      username and password and let the server build it. */
-  PAYHERO_API_USERNAME: z.string().optional().default(''),
-  PAYHERO_API_PASSWORD: z.string().optional().default(''),
-  PAYHERO_BASIC_TOKEN: z.string().optional().default(''),
-  PAYHERO_CHANNEL_ID: z.string().optional().default(''),
+  PAYHERO_API_USERNAME: z.string().trim().optional().default(''),
+  PAYHERO_API_PASSWORD: z.string().trim().optional().default(''),
+  PAYHERO_BASIC_TOKEN: z.string().trim().optional().default(''),
+  PAYHERO_CHANNEL_ID: z.string().trim().optional().default(''),
 
   /* The SMS gateways the demo rail texts from. Both are optional and
      both are optional together — with none of it set the rail runs
@@ -100,18 +105,18 @@ const schema = z.object({
   /* Celcom Africa. The shortcode is the sender ID they have registered
      for this account: whatever was approved (NOVI, NOVIMARKETS). It can
      never be MPESA, which belongs to Safaricom. */
-  CELCOM_API_KEY: z.string().optional().default(''),
-  CELCOM_PARTNER_ID: z.string().optional().default(''),
-  CELCOM_SHORTCODE: z.string().optional().default(''),
+  CELCOM_API_KEY: z.string().trim().optional().default(''),
+  CELCOM_PARTNER_ID: z.string().trim().optional().default(''),
+  CELCOM_SHORTCODE: z.string().trim().optional().default(''),
 
   /* Africa's Talking. The username decides which of their two worlds the
      key belongs to: "sandbox" is their test app, and a message sent
      through it reaches their simulator and never a handset. The sender
      ID is optional and messages go out as AFRICASTKNG without one, which
      is fine for a test and wrong for a demo. */
-  AFRICASTALKING_USERNAME: z.string().optional().default(''),
-  AFRICASTALKING_API_KEY: z.string().optional().default(''),
-  AFRICASTALKING_SENDER_ID: z.string().optional().default('')
+  AFRICASTALKING_USERNAME: z.string().trim().optional().default(''),
+  AFRICASTALKING_API_KEY: z.string().trim().optional().default(''),
+  AFRICASTALKING_SENDER_ID: z.string().trim().optional().default('')
 });
 
 /* ---------- URL fallbacks ----------
