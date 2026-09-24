@@ -12,8 +12,9 @@ import rateLimit from 'express-rate-limit';
 import { admin } from '../lib/supabase.js';
 import { requireAuth } from '../middleware/auth.js';
 import { validate } from '../middleware/validate.js';
-import { HttpError, badRequest, conflict } from '../lib/errors.js';
+import { HttpError, badRequest, conflict, forbidden } from '../lib/errors.js';
 import { events } from '../lib/events.js';
+import { newCopyKey } from '../lib/copyKey.js';
 
 const router = Router();
 
@@ -62,6 +63,87 @@ router.get('/', requireAuth, async (req, res, next) => {
       .from('profiles').select('copy_active').eq('id', req.user.id).single();
     if (error) throw new HttpError(500, 'copy_failed', error.message);
     res.json({ ok: true, copyActive: !!data?.copy_active });
+  } catch (err) { next(err); }
+});
+
+/* ---------------- a VIP's own keys ----------------
+   VIP accounts hand out copy-trading keys of their own. Each works once,
+   on one account, like a key made in the console. A VIP always has one
+   ready: if every key they made has been used, a fresh one is made the
+   next time they look. */
+const VIP_UNUSED_MAX = 5;
+const makeLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 20,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: { code: 'rate_limited', message: 'Too many attempts. Try again shortly.' } }
+});
+
+async function requireVip(req) {
+  const { data } = await admin
+    .from('profiles').select('tier').eq('id', req.user.id).maybeSingle();
+  if (data?.tier !== 'vip') throw forbidden('Copy-trading keys are for VIP accounts.');
+}
+
+function myKey(k) {
+  return {
+    id: k.id,
+    key: k.key,
+    createdAt: k.created_at,
+    redeemedAt: k.redeemed_at,
+    status: k.revoked_at ? 'revoked' : k.redeemed_by ? 'used' : 'unused'
+  };
+}
+
+async function listMine(userId) {
+  const { data, error } = await admin
+    .from('copy_keys').select('*')
+    .eq('created_by', userId)
+    .order('created_at', { ascending: false })
+    .limit(50);
+  if (error) throw new HttpError(500, 'keys_failed', error.message);
+  return data || [];
+}
+
+async function makeKey(userId) {
+  const { data, error } = await admin
+    .from('copy_keys')
+    .insert({ key: newCopyKey(), note: 'VIP key', created_by: userId })
+    .select().single();
+  if (error) throw new HttpError(500, 'keys_failed', error.message);
+  return data;
+}
+
+function summary(rows) {
+  return {
+    keys: rows.filter(k => !k.revoked_at).slice(0, 20).map(myKey),
+    activated: rows.filter(k => k.redeemed_by).length
+  };
+}
+
+router.get('/keys', requireAuth, async (req, res, next) => {
+  try {
+    await requireVip(req);
+    let rows = await listMine(req.user.id);
+    if (!rows.some(k => !k.redeemed_by && !k.revoked_at)) {
+      rows = [await makeKey(req.user.id), ...rows];
+    }
+    res.json({ ok: true, ...summary(rows) });
+  } catch (err) { next(err); }
+});
+
+router.post('/keys', makeLimiter, requireAuth, async (req, res, next) => {
+  try {
+    await requireVip(req);
+    const rows = await listMine(req.user.id);
+    const unused = rows.filter(k => !k.redeemed_by && !k.revoked_at).length;
+    if (unused >= VIP_UNUSED_MAX) {
+      throw conflict('You have ' + unused + ' unused keys. Share those before making more.');
+    }
+    const made = await makeKey(req.user.id);
+    events.info('copy', 'VIP made a copy-trading key', { userId: req.user.id });
+    res.status(201).json({ ok: true, key: myKey(made), ...summary([made, ...rows]) });
   } catch (err) { next(err); }
 });
 

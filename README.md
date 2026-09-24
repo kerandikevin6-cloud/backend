@@ -64,6 +64,8 @@ whether to place the next one.
 |---|---|---|
 | POST | `/copy/activate` | `{ key }`. One key, one account; sets `profiles.copy_active` |
 | GET  | `/copy` | `{ copyActive }` |
+| GET  | `/copy/keys` | VIP only: their keys and how many were used. Makes one if none is unused. Needs `sql/017_vip_copy_keys.sql` |
+| POST | `/copy/keys` | VIP only: a new key, up to 5 unused at once |
 | GET  | `/admin/copy-keys` | staff: every key and who used it |
 | POST | `/admin/copy-keys` | staff: `{ count, note }`, makes up to 50 keys |
 | POST | `/admin/copy-keys/:id/revoke` | staff: unused keys only |

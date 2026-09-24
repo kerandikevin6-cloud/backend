@@ -3,7 +3,7 @@
    Every route is behind requireStaff, and every write is audited.
    ============================================================ */
 import { Router } from 'express';
-import { randomInt } from 'node:crypto';
+import { newCopyKey } from '../lib/copyKey.js';
 import { z } from 'zod';
 import { admin } from '../lib/supabase.js';
 import { requireStaff, requireRole, audit, STAFF_ROLES } from '../middleware/adminAuth.js';
@@ -1119,19 +1119,8 @@ router.delete('/users/:id/wallet',
 /* ---------------- copy-trading keys ----------------
    A key switches copy trading on for the one account that redeems it.
    Made here, handed to the customer by whoever is talking to them, and
-   spent by POST /copy/activate.
-
-   Twelve characters from an alphabet with no 0/O or 1/I/L in it, so a
-   key read out over the phone arrives as it was sent. */
-const KEY_ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
-function newCopyKey() {
-  let out = '';
-  for (let i = 0; i < 12; i++) {
-    if (i && i % 4 === 0) out += '-';
-    out += KEY_ALPHABET[randomInt(KEY_ALPHABET.length)];
-  }
-  return out;
-}
+   spent by POST /copy/activate. VIP accounts make their own through
+   /copy/keys; those show here too, made by the VIP's address. */
 
 function publicCopyKey(k, emails) {
   return {
