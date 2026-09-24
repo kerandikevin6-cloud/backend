@@ -28,6 +28,7 @@ import { requireAuth } from '../middleware/auth.js';
 import { validate } from '../middleware/validate.js';
 import { HttpError } from '../lib/errors.js';
 import { events } from '../lib/events.js';
+import { publicRun } from './runs.routes.js';
 
 const router = Router();
 
@@ -54,7 +55,11 @@ const tradeSchema = z.object({
      odds. Tagged so the console's own figures can tell a demonstration
      from the business: a win rate that quietly includes staged wins is a
      number nobody can use. */
-  demoMode: z.boolean().optional()
+  demoMode: z.boolean().optional(),
+  /* The automated run this contract was placed by, if any. Its P/L is
+     moved by this contract and the run's status comes back in the
+     response, which is how the terminal knows whether to carry on. */
+  runId: z.string().uuid().optional()
 });
 
 function publicTrade(t) {
@@ -152,7 +157,8 @@ router.post('/',
         exit_spot: t.exitSpot ?? null,
         opened_at: t.openedAt.toISOString(),
         settled_at: t.settledAt.toISOString(),
-        demo_mode: !!t.demoMode
+        demo_mode: !!t.demoMode,
+        run_id: t.runId || null
       }));
 
       /* ignoreDuplicates: a re-send is not an error. */
@@ -201,8 +207,36 @@ router.post('/',
         balance = after == null ? balance : Number(after);
       }
 
+      /* The runs these contracts belong to. Only rows this call
+         inserted, so a re-sent contract never counts towards its run
+         twice. Every run touched is reported, including one a re-send
+         did not move, so the terminal always gets an answer. */
+      const runs = {};
+      for (const row of (data || [])) {
+        if (!row.run_id) continue;
+        const { data: run, error: runError } = await admin.rpc('apply_run_trade', {
+          p_run_id: row.run_id,
+          p_user_id: req.user.id,
+          p_profit_minor: Number(row.profit_minor)
+        });
+        if (runError) {
+          events.warn('runs', 'Trade not applied to its run: ' + runError.message, {
+            userId: req.user.id, context: { clientRef: row.client_ref, runId: row.run_id }
+          });
+          continue;
+        }
+        runs[row.run_id] = publicRun(Array.isArray(run) ? run[0] : run);
+      }
+      const asked = [...new Set(req.body.trades.map(t => t.runId).filter(Boolean))]
+        .filter(id => !runs[id]);
+      if (asked.length) {
+        const { data: rest } = await req.db.from('auto_runs').select('*').in('id', asked);
+        (rest || []).forEach(r => { runs[r.id] = publicRun(r); });
+      }
+
       res.status(201).json({
         ok: true,
+        runs: Object.values(runs),
         recorded: (data || []).length,
         sent: rows.length,
         /* The balance after, so the terminal can correct itself without

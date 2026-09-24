@@ -44,6 +44,30 @@ Then in Supabase → SQL editor, run `sql/001_schema.sql` and `sql/002_policies.
 | GET  | `/withdrawals` | list |
 | POST | `/withdrawals/:id/cancel` | releases the hold |
 
+### Automated runs
+Needs `sql/015_copy_keys_and_runs.sql`.
+
+| Method | Path | Notes |
+|---|---|---|
+| POST | `/runs` | `{ accountKind, takeProfitMinor, stopLossMinor, multiplier, baseStakeMinor }` → opens a run, closing any still open |
+| GET  | `/runs/:id` | the run's status, trades, wins, losses and P/L |
+| POST | `/runs/:id/stop` | stopped by hand |
+
+A run has no fixed number of contracts. Each contract is posted to
+`/trades` with its `runId`; the server adds its profit to the run and ends
+the run as `take_profit` or `stop_loss` the moment either rule is met. The
+`/trades` response carries `runs: [...]`, which is how the terminal knows
+whether to place the next one.
+
+### Copy trading
+| Method | Path | Notes |
+|---|---|---|
+| POST | `/copy/activate` | `{ key }`. One key, one account; sets `profiles.copy_active` |
+| GET  | `/copy` | `{ copyActive }` |
+| GET  | `/admin/copy-keys` | staff: every key and who used it |
+| POST | `/admin/copy-keys` | staff: `{ count, note }`, makes up to 50 keys |
+| POST | `/admin/copy-keys/:id/revoke` | staff: unused keys only |
+
 ### Webhooks
 | Method | Path | Notes |
 |---|---|---|

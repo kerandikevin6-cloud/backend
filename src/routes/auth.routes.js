@@ -250,7 +250,7 @@ router.get('/session', requireAuth, async (req, res, next) => {
   try {
     const { data: row } = await req.db
       .from('profiles')
-      .select('id,email,display_name,phone,country,kyc_status,referral_code,tier,demo_mode')
+      .select('id,email,display_name,phone,country,kyc_status,referral_code,tier,demo_mode,copy_active')
       .eq('id', req.user.id)
       .single();
 

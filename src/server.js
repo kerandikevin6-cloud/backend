@@ -22,6 +22,8 @@ import authRoutes from './routes/auth.routes.js';
 import depositRoutes from './routes/deposits.routes.js';
 import withdrawalRoutes from './routes/withdrawals.routes.js';
 import tradeRoutes from './routes/trades.routes.js';
+import runRoutes from './routes/runs.routes.js';
+import copyRoutes from './routes/copy.routes.js';
 import kycRoutes from './routes/kyc.routes.js';
 import ticketRoutes from './routes/tickets.routes.js';
 import mpesaRoutes from './routes/mpesa.routes.js';
@@ -129,6 +131,8 @@ app.use('/auth', authRoutes);
 app.use('/deposits', depositRoutes);
 app.use('/withdrawals', withdrawalRoutes);
 app.use('/trades', tradeRoutes);
+app.use('/runs', runRoutes);
+app.use('/copy', copyRoutes);
 app.use('/kyc', kycRoutes);
 app.use('/tickets', ticketRoutes);
 /* The companion handset. No Supabase session: it authenticates with a

@@ -3,6 +3,7 @@
    Every route is behind requireStaff, and every write is audited.
    ============================================================ */
 import { Router } from 'express';
+import { randomInt } from 'node:crypto';
 import { z } from 'zod';
 import { admin } from '../lib/supabase.js';
 import { requireStaff, requireRole, audit, STAFF_ROLES } from '../middleware/adminAuth.js';
@@ -1098,6 +1099,109 @@ router.delete('/users/:id/wallet',
       await demo.clearWallet(req.params.id);
       await audit(req, 'wallet.clear', req.params.id, null);
       res.json({ ok: true });
+    } catch (err) { next(err); }
+  });
+
+/* ---------------- copy-trading keys ----------------
+   A key switches copy trading on for the one account that redeems it.
+   Made here, handed to the customer by whoever is talking to them, and
+   spent by POST /copy/activate.
+
+   Twelve characters from an alphabet with no 0/O or 1/I/L in it, so a
+   key read out over the phone arrives as it was sent. */
+const KEY_ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
+function newCopyKey() {
+  let out = '';
+  for (let i = 0; i < 12; i++) {
+    if (i && i % 4 === 0) out += '-';
+    out += KEY_ALPHABET[randomInt(KEY_ALPHABET.length)];
+  }
+  return out;
+}
+
+function publicCopyKey(k, emails) {
+  return {
+    id: k.id,
+    key: k.key,
+    note: k.note,
+    createdAt: k.created_at,
+    createdBy: emails[k.created_by] || null,
+    redeemedAt: k.redeemed_at,
+    redeemedBy: k.redeemed_by || null,
+    redeemedByEmail: emails[k.redeemed_by] || null,
+    revokedAt: k.revoked_at,
+    status: k.revoked_at ? 'revoked' : k.redeemed_by ? 'used' : 'unused'
+  };
+}
+
+async function emailsFor(ids) {
+  const want = [...new Set(ids.filter(Boolean))];
+  if (!want.length) return {};
+  const { data } = await admin.from('profiles').select('id,email').in('id', want);
+  const map = {};
+  (data || []).forEach(p => { map[p.id] = p.email; });
+  return map;
+}
+
+const KEY_ROLES = ['super_admin', 'admin', 'manager', 'operator'];
+
+router.get('/copy-keys', requireRole(...KEY_ROLES), async (req, res, next) => {
+  try {
+    const { data, error } = await admin
+      .from('copy_keys').select('*')
+      .order('created_at', { ascending: false })
+      .limit(Math.min(500, Number(req.query.limit) || 200));
+    if (error) throw new HttpError(500, 'keys_failed', error.message);
+
+    const rows = data || [];
+    const emails = await emailsFor(rows.flatMap(k => [k.created_by, k.redeemed_by]));
+    res.json({ ok: true, keys: rows.map(k => publicCopyKey(k, emails)) });
+  } catch (err) { next(err); }
+});
+
+router.post('/copy-keys',
+  requireRole(...KEY_ROLES),
+  validate(z.object({
+    count: z.coerce.number().int().min(1).max(50).default(1),
+    note: z.string().trim().max(200).optional()
+  })),
+  async (req, res, next) => {
+    try {
+      const rows = Array.from({ length: req.body.count }, () => ({
+        key: newCopyKey(),
+        note: req.body.note || null,
+        created_by: req.operator.id
+      }));
+      const { data, error } = await admin.from('copy_keys').insert(rows).select();
+      if (error) throw new HttpError(500, 'keys_failed', error.message);
+
+      /* The keys themselves are not audited: the audit trail is read by
+         more people than this page is, and a key in it is a key anyone
+         reading could spend. */
+      await audit(req, 'copy_key.create', null, { count: rows.length, note: req.body.note || null });
+
+      const emails = { [req.operator.id]: req.operator.email };
+      res.status(201).json({ ok: true, keys: (data || []).map(k => publicCopyKey(k, emails)) });
+    } catch (err) { next(err); }
+  });
+
+router.post('/copy-keys/:id/revoke',
+  requireRole(...KEY_ROLES),
+  async (req, res, next) => {
+    try {
+      const { data, error } = await admin
+        .from('copy_keys')
+        .update({ revoked_at: new Date().toISOString() })
+        .eq('id', req.params.id)
+        .is('redeemed_by', null)
+        .is('revoked_at', null)
+        .select()
+        .maybeSingle();
+      if (error) throw new HttpError(500, 'keys_failed', error.message);
+      if (!data) throw conflict('Only an unused key can be revoked.');
+
+      await audit(req, 'copy_key.revoke', data.id, null);
+      res.json({ ok: true, key: publicCopyKey(data, {}) });
     } catch (err) { next(err); }
   });
 
