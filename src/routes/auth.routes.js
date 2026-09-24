@@ -428,7 +428,8 @@ function publicUser(user) {
   return {
     id: user.id,
     email: user.email,
-    name: user.user_metadata?.full_name || null
+    name: user.user_metadata?.full_name || null,
+    createdAt: user.created_at || null
   };
 }
 
