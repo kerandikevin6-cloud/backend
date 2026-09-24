@@ -7,6 +7,7 @@
    ============================================================ */
 import { admin } from '../lib/supabase.js';
 import { unauthorized, forbidden } from '../lib/errors.js';
+import { userForToken } from './auth.js';
 
 /* The full set of roles that may open the console. This is the door;
    requireRole() below narrows individual actions once inside. The list
@@ -29,8 +30,11 @@ export async function requireStaff(req, _res, next) {
     const [scheme, token] = header.split(' ');
     if (!token || scheme.toLowerCase() !== 'bearer') throw unauthorized();
 
-    const { data, error } = await admin.auth.getUser(token);
-    if (error || !data?.user) throw unauthorized('That session has expired. Sign in again.');
+    /* Checked locally: the role and status below are read from the
+       database on every request, which is the gate that matters. */
+    const authed = await userForToken(token);
+    if (!authed) throw unauthorized('That session has expired. Sign in again.');
+    const data = { user: authed };
 
     const { data: profile } = await admin
       .from('profiles')

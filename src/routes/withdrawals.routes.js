@@ -11,7 +11,7 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import { admin } from '../lib/supabase.js';
-import { requireAuth } from '../middleware/auth.js';
+import { requireAuth, requireAuthStrict } from '../middleware/auth.js';
 import { validate } from '../middleware/validate.js';
 import { paymentLimiter } from '../middleware/rateLimit.js';
 import { badRequest, forbidden, notFound, conflict, HttpError } from '../lib/errors.js';
@@ -24,7 +24,7 @@ import * as demo from '../services/mpesaDemo.js';
 const router = Router();
 
 router.post('/',
-  requireAuth,
+  requireAuthStrict,
   paymentLimiter,
   validate(z.object({
     amountMinor: z.coerce.number().int()

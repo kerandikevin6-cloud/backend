@@ -8,7 +8,7 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { anon, admin } from '../lib/supabase.js';
 import { validate } from '../middleware/validate.js';
-import { requireAuth } from '../middleware/auth.js';
+import { requireAuth, requireAuthStrict } from '../middleware/auth.js';
 import { authLimiter, resetLimiter } from '../middleware/rateLimit.js';
 import { badRequest, unauthorized, HttpError } from '../lib/errors.js';
 import { env } from '../config/env.js';
@@ -214,7 +214,7 @@ router.post('/reset-password',
 
 /* ---------------- change password while signed in ---------------- */
 router.post('/change-password',
-  requireAuth,
+  requireAuthStrict,
   authLimiter,
   validate(z.object({
     currentPassword: z.string().min(1, 'Enter your current password'),
@@ -250,7 +250,7 @@ router.get('/session', requireAuth, async (req, res, next) => {
   try {
     const { data: row } = await req.db
       .from('profiles')
-      .select('id,email,display_name,phone,country,kyc_status,referral_code,tier,demo_mode,copy_active')
+      .select('id,email,display_name,phone,country,kyc_status,referral_code,tier,demo_mode,copy_active,created_at')
       .eq('id', req.user.id)
       .single();
 
@@ -271,7 +271,12 @@ router.get('/session', requireAuth, async (req, res, next) => {
       .select('kind,currency,balance_minor')
       .eq('user_id', req.user.id);
 
-    res.json({ ok: true, user: publicUser(req.user), profile, accounts: accounts || [] });
+    /* A token checked locally carries no account date; the profile
+       row has one, made in the same moment as the account. */
+    const user = publicUser(req.user);
+    if (!user.createdAt && row?.created_at) user.createdAt = row.created_at;
+
+    res.json({ ok: true, user, profile, accounts: accounts || [] });
   } catch (err) { next(err); }
 });
 
@@ -291,7 +296,7 @@ router.get('/session', requireAuth, async (req, res, next) => {
    checked against it.
 */
 router.post('/profile',
-  requireAuth,
+  requireAuthStrict,
   validate(z.object({
     firstName: z.string().trim().max(40).optional(),
     lastName: z.string().trim().max(40).optional(),
@@ -363,7 +368,7 @@ router.post('/profile',
    not a guard. The change is recorded in the event log instead, masked,
    so there is a trail of when it moved and to what. */
 router.post('/phone',
-  requireAuth,
+  requireAuthStrict,
   authLimiter,
   validate(z.object({
     phone: z.string().min(6, 'Enter your number'),
