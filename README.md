@@ -66,6 +66,8 @@ whether to place the next one.
 | GET  | `/copy` | `{ copyActive }` |
 | GET  | `/copy/keys` | VIP only: their keys and how many were used. Makes one if none is unused. Needs `sql/017_vip_copy_keys.sql` |
 | POST | `/copy/keys` | VIP only: a new key, up to 5 unused at once |
+| POST | `/copy/keys/:id/regenerate` | VIP only: a new code for an unused key; the old code stops working |
+| POST | `/copy/keys/:id/deactivate` | VIP only: an unused key stops working |
 | GET  | `/admin/copy-keys` | staff: every key and who used it |
 | POST | `/admin/copy-keys` | staff: `{ count, note }`, makes up to 50 keys |
 | POST | `/admin/copy-keys/:id/revoke` | staff: unused keys only |

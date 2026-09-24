@@ -12,7 +12,7 @@ import rateLimit from 'express-rate-limit';
 import { admin } from '../lib/supabase.js';
 import { requireAuth } from '../middleware/auth.js';
 import { validate } from '../middleware/validate.js';
-import { HttpError, badRequest, conflict, forbidden } from '../lib/errors.js';
+import { HttpError, badRequest, conflict, forbidden, notFound } from '../lib/errors.js';
 import { events } from '../lib/events.js';
 import { newCopyKey } from '../lib/copyKey.js';
 
@@ -126,7 +126,11 @@ router.get('/keys', requireAuth, async (req, res, next) => {
   try {
     await requireVip(req);
     let rows = await listMine(req.user.id);
-    if (!rows.some(k => !k.redeemed_by && !k.revoked_at)) {
+    /* One ready to share when every key has been used, but not straight
+       after the VIP deactivated their last one: they asked for it gone,
+       and a new one appearing in its place would undo that. */
+    const latest = rows[0];
+    if (!rows.some(k => !k.redeemed_by && !k.revoked_at) && !(latest && latest.revoked_at)) {
       rows = [await makeKey(req.user.id), ...rows];
     }
     res.json({ ok: true, ...summary(rows) });
@@ -144,6 +148,69 @@ router.post('/keys', makeLimiter, requireAuth, async (req, res, next) => {
     const made = await makeKey(req.user.id);
     events.info('copy', 'VIP made a copy-trading key', { userId: req.user.id });
     res.status(201).json({ ok: true, key: myKey(made), ...summary([made, ...rows]) });
+  } catch (err) { next(err); }
+});
+
+/* ---------------- regenerate and deactivate ----------------
+   Both only on a key this VIP made that nobody has used yet. A used key
+   has done its job: the account that entered it keeps copy trading, and
+   taking it away is a decision for the console, not for whoever shared
+   the key. */
+async function ownUnused(req) {
+  const { data, error } = await admin
+    .from('copy_keys').select('*')
+    .eq('id', req.params.id)
+    .eq('created_by', req.user.id)
+    .maybeSingle();
+  if (error) throw new HttpError(500, 'keys_failed', error.message);
+  if (!data) throw notFound('No such key');
+  if (data.revoked_at) throw conflict('That key is already deactivated.');
+  if (data.redeemed_by) throw conflict('That key has already been used, so it cannot be changed.');
+  return data;
+}
+
+/* A new code in place of the old one. The old code stops working the
+   moment this returns, which is the point: a key shown on a shared
+   screen can be made useless without losing its place in the list. The
+   update is conditional on the key still being unused, so it cannot race
+   somebody redeeming it. */
+router.post('/keys/:id/regenerate', makeLimiter, requireAuth, async (req, res, next) => {
+  try {
+    await requireVip(req);
+    await ownUnused(req);
+    const { data, error } = await admin
+      .from('copy_keys')
+      .update({ key: newCopyKey(), created_at: new Date().toISOString() })
+      .eq('id', req.params.id)
+      .eq('created_by', req.user.id)
+      .is('redeemed_by', null)
+      .is('revoked_at', null)
+      .select().maybeSingle();
+    if (error) throw new HttpError(500, 'keys_failed', error.message);
+    if (!data) throw conflict('That key was used a moment ago, so it was not changed.');
+
+    events.info('copy', 'VIP regenerated a copy-trading key', { userId: req.user.id });
+    res.json({ ok: true, key: myKey(data), ...summary(await listMine(req.user.id)) });
+  } catch (err) { next(err); }
+});
+
+router.post('/keys/:id/deactivate', makeLimiter, requireAuth, async (req, res, next) => {
+  try {
+    await requireVip(req);
+    await ownUnused(req);
+    const { data, error } = await admin
+      .from('copy_keys')
+      .update({ revoked_at: new Date().toISOString() })
+      .eq('id', req.params.id)
+      .eq('created_by', req.user.id)
+      .is('redeemed_by', null)
+      .is('revoked_at', null)
+      .select().maybeSingle();
+    if (error) throw new HttpError(500, 'keys_failed', error.message);
+    if (!data) throw conflict('That key was used a moment ago, so it was not deactivated.');
+
+    events.info('copy', 'VIP deactivated a copy-trading key', { userId: req.user.id });
+    res.json({ ok: true, ...summary(await listMine(req.user.id)) });
   } catch (err) { next(err); }
 });
 
