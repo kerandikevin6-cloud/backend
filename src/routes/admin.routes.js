@@ -891,13 +891,26 @@ router.get('/verifications',
         for (const p of profiles || []) people[p.id] = p;
       }
 
-      const out = [];
-      for (const row of rows) {
-        let url = null;
+      async function sign(path) {
         const { data: signed } = await admin.storage
           .from('kyc')
-          .createSignedUrl(row.storage_path, DOC_LINK_SECONDS);
-        if (signed?.signedUrl) url = signed.signedUrl;
+          .createSignedUrl(path, DOC_LINK_SECONDS);
+        return signed?.signedUrl || null;
+      }
+
+      const out = [];
+      for (const row of rows) {
+        const url = await sign(row.storage_path);
+
+        /* A full submission carries every document; an older one carries
+           just its own. Either way the reviewer gets a list. */
+        const files = (row.files && row.files.length)
+          ? row.files
+          : [{ kind: row.kind, path: row.storage_path, mimeType: row.mime_type }];
+        const documents = [];
+        for (const f of files) {
+          documents.push({ kind: f.kind, mimeType: f.mimeType || null, url: await sign(f.path) });
+        }
 
         const who = people[row.user_id];
         out.push({
@@ -915,6 +928,7 @@ router.get('/verifications',
           mimeType: row.mime_type,
           byteSize: row.byte_size,
           documentUrl: url,
+          documents,
           at: row.created_at,
           reviewedAt: row.reviewed_at
         });
