@@ -50,6 +50,18 @@ Then in Supabase → SQL editor, run `sql/001_schema.sql` and `sql/002_policies.
 | POST | `/webhooks/paystack` | HMAC SHA-512 over the raw body |
 | POST | `/webhooks/payhero/:secret` | secret in the path; PayHero does not sign |
 
+### Manual credits (console)
+| Method | Path | Notes |
+|---|---|---|
+| POST | `/admin/users/:id/credit` | `{ amountMinor, note, requestId }`, USD cents. super_admin, admin or finance |
+
+For customers in a country no gateway covers: they send the money some
+other way and staff load it. The credit is written as a `manual` deposit
+and settled through `settle_deposit`, so it is in the ledger and the
+customer's deposit history like any other. The note is required and
+audited. `requestId` is stored as the unique `provider_ref`, so a double
+click is refused rather than paid twice.
+
 ## How money moves
 
 Nothing in a route handler changes a balance. A deposit goes:

@@ -14,6 +14,7 @@ import * as demo from '../services/mpesaDemo.js';
 import { sendSms, smsConfigured, smsSender, smsProvider } from '../services/sms.js';
 import { testMessage, messageFor } from '../services/mpesaSms.js';
 import { events } from '../lib/events.js';
+import { newReference } from '../lib/reference.js';
 import { env, corsOrigins, payheroAuthSource, smsSource } from '../config/env.js';
 import { callbackUrl as payheroCallbackUrl } from '../services/payhero.js';
 
@@ -194,6 +195,97 @@ router.patch('/users/:id',
 
       await audit(req, 'user.update', req.params.id, { patch, reason: req.body.reason || null });
       res.json({ ok: true, user: publicUser(data) });
+    } catch (err) { next(err); }
+  });
+
+/* Load dollars onto a customer's real balance by hand.
+
+   For somebody in a country no gateway reaches: they send the money to
+   the business some other way, and a person puts it on the account. It
+   is written as a 'manual' deposit and settled through settle_deposit,
+   the same function every other deposit uses, so it shows on the
+   customer's deposit history, on the payments screen, and in the ledger
+   exactly like money that came through a provider.
+
+   The note is required. Nothing here can check that the money arrived,
+   so the record of who said it did, and what they were looking at, is
+   the whole of the evidence.
+
+   requestId comes from the console, one per form, and is stored as the
+   provider_ref, which is unique. A double click or a retried request
+   lands on the same key and is refused rather than paid twice. */
+router.post('/users/:id/credit',
+  requireRole('super_admin', 'admin', 'finance'),
+  validate(z.object({
+    amountMinor: z.coerce.number().int()
+      .refine(v => v >= 100, 'At least 1.00')
+      .refine(v => v <= 5000000, 'Above 50,000.00 in one credit'),
+    note: z.string().trim().min(3, 'Say where the money came from').max(300),
+    requestId: z.string().trim().min(8).max(64).regex(/^[A-Za-z0-9-]+$/)
+  })),
+  async (req, res, next) => {
+    try {
+      const { data: profile } = await admin
+        .from('profiles').select('id,role,display_name,email').eq('id', req.params.id).maybeSingle();
+      if (!profile) throw notFound('No such user');
+      if (profile.role !== 'customer') throw badRequest('Only customer accounts are credited.');
+
+      const providerRef = 'admin:' + req.body.requestId;
+      const { data: payment, error: insertError } = await admin
+        .from('payments')
+        .insert({
+          user_id: profile.id,
+          direction: 'deposit',
+          provider: 'manual',
+          reference: newReference('ADM'),
+          provider_ref: providerRef,
+          amount_minor: req.body.amountMinor,
+          currency: 'USD',
+          status: 'pending',
+          raw: { creditedBy: req.operator.id, creditedByEmail: req.operator.email, note: req.body.note }
+        })
+        .select()
+        .single();
+
+      if (insertError) {
+        if (insertError.code === '23505') throw conflict('That credit has already been made.');
+        throw new HttpError(500, 'credit_failed', insertError.message);
+      }
+
+      const { error } = await admin.rpc('settle_deposit', {
+        p_payment_id: payment.id,
+        p_provider_ref: providerRef,
+        p_credited_minor: req.body.amountMinor,
+        p_raw: null
+      });
+      if (error) {
+        await admin.rpc('fail_payment', {
+          p_payment_id: payment.id, p_reason: 'could not settle', p_raw: null
+        }).then(() => {}, () => {});
+        throw new HttpError(500, 'credit_failed', error.message);
+      }
+
+      await audit(req, 'user.credit', profile.id, {
+        payment: payment.id, reference: payment.reference,
+        amountMinor: req.body.amountMinor, note: req.body.note
+      });
+
+      events.info('manual', 'Real balance credited by hand', {
+        userId: profile.id,
+        reference: payment.reference,
+        context: { amountMinor: req.body.amountMinor, by: req.operator.email }
+      });
+
+      const [{ data: fresh }, { data: account }] = await Promise.all([
+        admin.from('payments').select('*').eq('id', payment.id).single(),
+        admin.from('accounts').select('balance_minor')
+          .eq('user_id', profile.id).eq('kind', 'real').maybeSingle()
+      ]);
+      res.status(201).json({
+        ok: true,
+        payment: publicPayment(fresh, profile),
+        balanceMinor: account ? Number(account.balance_minor) : null
+      });
     } catch (err) { next(err); }
   });
 
@@ -1185,9 +1277,14 @@ function publicPayment(p, person) {
     userEmail: person?.email || null,
     provider: p.provider,
     providerLabel: p.provider === 'payhero' ? 'M-Pesa'
-      : p.provider === 'usdt' ? 'USDT' : 'Card',
+      : p.provider === 'usdt' ? 'USDT'
+      : p.provider === 'manual' ? 'Admin credit' : 'Card',
     method: p.provider === 'payhero' ? 'mpesa'
-      : p.provider === 'usdt' ? 'usdt' : 'card',
+      : p.provider === 'usdt' ? 'usdt'
+      : p.provider === 'manual' ? 'manual' : 'card',
+    /* Who loaded it and why, for a credit made by hand. */
+    note: p.provider === 'manual' ? (p.raw?.note || null) : null,
+    creditedBy: p.provider === 'manual' ? (p.raw?.creditedByEmail || null) : null,
     /* The hash is the whole of the evidence on a chain transfer, so it
        goes to the screen where somebody decides whether to credit it. */
     txHash: p.provider === 'usdt' ? (p.raw?.txHash || null) : null,
