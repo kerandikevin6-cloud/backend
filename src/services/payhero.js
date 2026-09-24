@@ -37,7 +37,15 @@ async function call(path, options = {}) {
         ...(options.headers || {})
       }
     });
-  } catch {
+  } catch (cause) {
+    /* Too slow is worth telling apart from unreachable: a push that
+       timed out may still reach the phone, so its payment row is left
+       open rather than failed. */
+    if (cause && (cause.name === 'TimeoutError' || cause.name === 'AbortError')) {
+      const err = upstream('The M-Pesa provider took too long to answer');
+      err.timedOut = true;
+      throw err;
+    }
     throw upstream('Could not reach the M-Pesa provider');
   }
 
@@ -80,6 +88,7 @@ export async function stkPush({ phone, amountMinor, reference, name }) {
 
   const body = await call('/payments', {
     method: 'POST',
+    signal: AbortSignal.timeout(env.PAYHERO_PUSH_TIMEOUT_MS),
     body: JSON.stringify({
       amount,
       phone_number: phone,

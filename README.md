@@ -34,6 +34,14 @@ Then in Supabase → SQL editor, run `sql/001_schema.sql` and `sql/002_policies.
 |---|---|---|
 | POST | `/deposits/mpesa` | `{ amountMinor, phone }` → STK push |
 | POST | `/deposits/card` | `{ amountMinor }` → Paystack checkout URL |
+| POST | `/deposits/mpesa/:reference/resend` | the prompt never arrived: a new one through Paystack, same amount and phone |
+
+**M-Pesa fallback.** If PayHero refuses the prompt, cannot be reached, or
+takes longer than `PAYHERO_PUSH_TIMEOUT_MS` (15s) to accept it,
+`POST /deposits/mpesa` sends it through Paystack's M-Pesa charge instead and
+answers with `rail: "paystack"`. A PayHero push that only timed out is left
+pending, since the prompt may still arrive. Set `MPESA_FALLBACK=off` to turn
+it off. Needs M-Pesa enabled on the Paystack account (Kenya, KES).
 | GET  | `/deposits/:reference` | poll while the waiting screen is up |
 | GET  | `/deposits` | recent deposits |
 

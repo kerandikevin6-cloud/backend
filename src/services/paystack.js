@@ -60,6 +60,37 @@ export async function initializeTransaction({ email, amountMinor, currency, refe
 }
 
 /**
+ * Send an M-Pesa prompt through Paystack. The fallback for when PayHero
+ * cannot: same customer, same amount, same phone.
+ * Docs: https://paystack.com/docs/payments/payment-channels/#mobile-money
+ *
+ * Amount is KES in cents, which is what Paystack wants. The phone goes
+ * in international form with a plus. Needs M-Pesa switched on for the
+ * Paystack account (Kenya, KES).
+ *
+ * Paystack answers "pay_offline" when the prompt is on its way, and the
+ * charge settles through the same webhook and verify call a card does.
+ */
+export async function chargeMpesa({ email, amountMinor, currency, phone, reference, metadata }) {
+  const data = await call('/charge', {
+    method: 'POST',
+    signal: AbortSignal.timeout(20000),
+    body: JSON.stringify({
+      email,
+      amount: amountMinor,
+      currency: currency || 'KES',
+      reference,
+      mobile_money: { phone: '+' + String(phone).replace(/^\+/, ''), provider: 'mpesa' },
+      metadata: metadata || {}
+    })
+  });
+  if (data && ['failed', 'abandoned'].includes(String(data.status))) {
+    throw upstream(data.gateway_response || data.message || 'M-Pesa declined the request');
+  }
+  return data;
+}
+
+/**
  * Ask Paystack what actually happened. The webhook is the trigger, but
  * this is the truth: we re-verify before crediting so a forged or
  * replayed callback cannot invent a successful payment.

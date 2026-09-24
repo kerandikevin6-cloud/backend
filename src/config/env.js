@@ -110,6 +110,14 @@ const schema = z.object({
   PAYHERO_BASIC_TOKEN: secret().optional().default(''),
   PAYHERO_CHANNEL_ID: secret().optional().default(''),
 
+  /* When PayHero cannot send the M-Pesa prompt (refuses, is down, or is
+     too slow to answer), send it through Paystack instead. 'off' turns
+     the fallback off and a PayHero failure is reported as before. */
+  MPESA_FALLBACK: z.enum(['paystack', 'off']).default('paystack'),
+  /* How long to wait for PayHero to accept the prompt before falling
+     back. Its answer normally takes a second or two. */
+  PAYHERO_PUSH_TIMEOUT_MS: z.coerce.number().int().min(3000).max(60000).default(15000),
+
   /* The SMS gateways the demo rail texts from. Both are optional and
      both are optional together — with none of it set the rail runs
      exactly as before, silently, which is what a laptop with no .env
