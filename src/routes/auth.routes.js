@@ -256,6 +256,8 @@ router.get('/session', requireAuth, async (req, res, next) => {
 
     const profile = row && {
       ...row,
+      /* VIP accounts hand out the keys, so they never need one. */
+      copy_active: !!row.copy_active || row.tier === 'vip',
       phone: undefined,
       phone_masked: maskPhone(row.phone),
       phone_set: !!row.phone,

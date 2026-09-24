@@ -60,9 +60,10 @@ router.post('/activate',
 router.get('/', requireAuth, async (req, res, next) => {
   try {
     const { data, error } = await req.db
-      .from('profiles').select('copy_active').eq('id', req.user.id).single();
+      .from('profiles').select('copy_active,tier').eq('id', req.user.id).single();
     if (error) throw new HttpError(500, 'copy_failed', error.message);
-    res.json({ ok: true, copyActive: !!data?.copy_active });
+    /* VIP accounts hand out the keys, so they never need one. */
+    res.json({ ok: true, copyActive: !!data?.copy_active || data?.tier === 'vip' });
   } catch (err) { next(err); }
 });
 
