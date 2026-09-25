@@ -145,7 +145,12 @@ const schema = z.object({
      is fine for a test and wrong for a demo. */
   AFRICASTALKING_USERNAME: secret().optional().default(''),
   AFRICASTALKING_API_KEY: secret().optional().default(''),
-  AFRICASTALKING_SENDER_ID: secret().optional().default('')
+  AFRICASTALKING_SENDER_ID: secret().optional().default(''),
+
+  /* Which SMS gateway to use when both are configured. auto prefers
+     Celcom; africastalking or celcom forces that one (if it is set up),
+     so one can be switched off without deleting its credentials. */
+  SMS_PROVIDER: z.enum(['auto', 'celcom', 'africastalking']).default('auto')
 });
 
 /* ---------- URL fallbacks ----------
@@ -196,7 +201,15 @@ const celcomPart = !!(env.CELCOM_API_KEY || env.CELCOM_PARTNER_ID || env.CELCOM_
 const atSet = !!(env.AFRICASTALKING_USERNAME && env.AFRICASTALKING_API_KEY);
 const atPart = !!(env.AFRICASTALKING_USERNAME || env.AFRICASTALKING_API_KEY);
 
-export const smsSource = celcomSet
+const atLine = () => (env.AFRICASTALKING_USERNAME === 'sandbox'
+  ? "Africa's Talking (sandbox — messages reach their simulator, not a handset), sender AFRICASTKNG"
+  : `Africa's Talking, sender ${env.AFRICASTALKING_SENDER_ID || 'AFRICASTKNG'}`);
+
+export const smsSource = (env.SMS_PROVIDER === 'africastalking' && atSet)
+  ? atLine() + ' (chosen by SMS_PROVIDER' + (celcomSet ? '; Celcom is set and unused' : '') + ')'
+  : (env.SMS_PROVIDER === 'celcom' && celcomSet)
+  ? `Celcom, sender ${env.CELCOM_SHORTCODE} (chosen by SMS_PROVIDER)`
+  : celcomSet
   ? `Celcom, sender ${env.CELCOM_SHORTCODE}` +
     (atSet ? " (Africa's Talking is also set and is the standby)" : '')
   : atSet

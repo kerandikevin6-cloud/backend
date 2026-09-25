@@ -33,11 +33,15 @@ import * as celcom from './celcom.js';
 import * as africastalking from './africastalking.js';
 import { events } from '../lib/events.js';
 import { normalisePhone } from '../lib/phone.js';
+import { env } from '../config/env.js';
 
 const GATEWAYS = [celcom, africastalking];
 
 /** Whichever is configured, in order of preference. null when none is. */
 export function gateway() {
+  /* SMS_PROVIDER picks one outright, when that one is set up. */
+  const forced = { celcom, africastalking }[env.SMS_PROVIDER];
+  if (forced && forced.configured()) return forced;
   return GATEWAYS.find(g => g.configured()) || null;
 }
 

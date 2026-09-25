@@ -43,6 +43,9 @@ services:
         sync: false
       - key: AFRICASTALKING_SENDER_ID
         sync: false
+      # auto (Celcom first), africastalking, or celcom
+      - key: SMS_PROVIDER
+        sync: false
       - key: CORS_ORIGINS      # your front end origins, comma separated
         sync: false
       - key: APP_URL           # defaults to the first CORS origin
