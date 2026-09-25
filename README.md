@@ -56,7 +56,9 @@ business, charging in KES.
 | POST | `/withdrawals/:id/cancel` | releases the hold |
 
 ### Automated runs
-Needs `sql/015_copy_keys_and_runs.sql`.
+Needs `sql/015_copy_keys_and_runs.sql`, and `sql/018_sold_trades.sql` for
+contracts closed early (`status: "sold"`, credited at the price they were
+sold for).
 
 | Method | Path | Notes |
 |---|---|---|

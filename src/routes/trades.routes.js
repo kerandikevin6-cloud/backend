@@ -45,7 +45,9 @@ const tradeSchema = z.object({
   payoutMinor: z.coerce.number().int().min(0).default(0),
   profitMinor: z.coerce.number().int(),
   currency: z.string().length(3).default('USD'),
-  status: z.enum(['won', 'lost']),
+  /* sold: closed before its last tick, for what it was worth then;
+     payoutMinor is what it was sold for. Needs sql/018. */
+  status: z.enum(['won', 'lost', 'sold']),
   ticks: z.coerce.number().int().min(0).max(100).optional(),
   entrySpot: z.coerce.number().optional(),
   exitSpot: z.coerce.number().optional(),
@@ -205,7 +207,10 @@ router.post('/',
           p_type: row.contract_type,
           p_stake_minor: Number(row.stake_minor),
           p_payout_minor: Number(row.payout_minor),
-          p_won: row.status === 'won'
+          /* A sale is applied like a win at the price it was sold for:
+             payout - stake, which is negative when it was sold below the
+             stake. Reporting it as a loss took the whole stake. */
+          p_won: row.status === 'won' || row.status === 'sold'
         });
 
         if (moveError) {
