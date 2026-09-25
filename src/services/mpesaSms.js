@@ -1,130 +1,130 @@
 /* ============================================================
-   The M-Pesa confirmation text
+   The Novi Wallet text
 
-   Every movement on the demo rail ends the way a real one does: with a
-   message on the handset. Without it the clone app is a screen that
-   changes by itself, and the half of the flow an audience actually
-   recognises — the text arriving a second after the PIN — is missing.
+   Every movement on the demo rail ends with a message on the handset:
+   without it the wallet app is a screen that changes by itself, and the
+   moment an audience recognises — the text arriving a second after the
+   PIN — is missing.
 
-   The wording here is copied from Safaricom's, spacing included, because
-   the spacing is part of what makes it recognisable: "Confirmed." with
-   no space after it, "New M-PESA balance" capitalised that way, the date
-   as 20/9/26 rather than 2026-09-20. Read one out loud next to a real
-   one before changing a comma.
+   These are Novi's own notifications, in the style a bank uses when it
+   tells you about money it moved: a reference of ours, "Dear <name>",
+   what happened, the wallet balance after it, a sign-off. They are not
+   M-PESA messages and do not pretend to be: no Safaricom wording, no
+   M-PESA receipt number, no Safaricom links. The sender is whatever the
+   gateway has registered for this account, never MPESA.
 
-   What this is not: it is not a way to make a prop balance look like
-   money to somebody who did not ask to see a demo. The sender ID is
-   whatever the gateway has registered for this account — never MPESA,
-   which is Safaricom's and cannot be sent from anyway — so a message
-   that arrives is attributable to us. See the note in mpesaDemo.js.
+   The balance quoted is the demo wallet's own, read off the movement that
+   produced the text, so the message and the wallet app always agree.
    ============================================================ */
+import crypto from 'node:crypto';
 import { sendSmsLogged, smsConfigured } from './sms.js';
 import { events } from '../lib/events.js';
 
-/* Who the handset sees on the other side of the transaction. The
-   trading side of the rail, named as a till would be. */
-const MERCHANT = 'NOVI MARKETS';
+/* Who the trading side of the rail is, as the texts name it. */
+const MERCHANT = 'Novi Markets Ltd';
+const SIGN_OFF = 'Trade smart with Novi.';
 
-/* Safaricom quotes shillings as Ksh1,234.00. */
-function ksh(minor) {
-  return 'Ksh' + (Number(minor || 0) / 100).toLocaleString('en-KE', {
+/* KES 2,000.00 */
+function kes(minor) {
+  return 'KES ' + (Number(minor || 0) / 100).toLocaleString('en-KE', {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2
   });
 }
 
-/* 20/9/26 at 4:15 PM, in Nairobi, whatever timezone the server thinks
-   it is in. A demo in Nairobi reading a timestamp in UTC is the kind of
-   detail that gets noticed from the back of the room. */
+/* 25-09-2026 05:15 AM, in Nairobi whatever timezone the server is in. */
 function stamp(at) {
   const when = at ? new Date(at) : new Date();
-  const parts = new Intl.DateTimeFormat('en-GB', {
+  const p = new Intl.DateTimeFormat('en-GB', {
     timeZone: 'Africa/Nairobi',
-    day: 'numeric', month: 'numeric', year: '2-digit',
-    hour: 'numeric', minute: '2-digit', hour12: true
-  }).formatToParts(when).reduce((acc, p) => (acc[p.type] = p.value, acc), {});
-
-  /* en-GB pads the day and month to two digits; Safaricom does not, and
-     20/9/26 next to 20/09/26 is exactly the sort of difference somebody
-     in the front row notices. */
-  const trim = v => String(Number(v));
-  const date = `${trim(parts.day)}/${trim(parts.month)}/${parts.year}`;
-  const time = `${parts.hour}:${parts.minute} ${(parts.dayPeriod || '').toUpperCase()}`;
-  return { date, time };
+    day: '2-digit', month: '2-digit', year: 'numeric',
+    hour: '2-digit', minute: '2-digit', hour12: true
+  }).formatToParts(when).reduce((acc, x) => (acc[x.type] = x.value, acc), {});
+  return `${p.day}-${p.month}-${p.year} ${p.hour}:${p.minute} ${(p.dayPeriod || '').toUpperCase()}`;
 }
 
-/* The overdraft line, when there is one to report. Real M-Pesa appends
-   it to the same message rather than sending a second one. */
-function fulizaLine(usedMinor) {
+/* Our reference: N and eleven characters, the same for the same
+   transaction every time it is asked for. */
+function novRef(tx) {
+  const seed = String(tx.reference || tx.id || tx.at || Date.now());
+  return 'N' + crypto.createHash('sha1').update(seed).digest('hex').slice(0, 11).toUpperCase();
+}
+
+/* 071****678 from 254712345678. */
+function maskedNumber(phone) {
+  const d = String(phone || '').replace(/\D/g, '');
+  if (d.length < 9) return '';
+  const local = d.startsWith('254') ? '0' + d.slice(3) : d;
+  return local.slice(0, 3) + '****' + local.slice(-3);
+}
+
+function firstName(wallet) {
+  const n = String(wallet?.holderName || wallet?.name || '').trim().split(/\s+/)[0];
+  /* A wallet with no name set carries a placeholder, not a person. */
+  return n && !/m-?pesa/i.test(n) ? n : 'Customer';
+}
+
+/* What is owed on the wallet's overdraft, when anything is. */
+function overdraftLine(usedMinor) {
   if (!usedMinor || usedMinor <= 0) return '';
-  return ` Fuliza M-PESA amount is ${ksh(usedMinor)}.` +
-    ` Interest charged Ksh0.00.` +
-    ` Total Fuliza M-PESA outstanding amount is ${ksh(usedMinor)}.`;
+  return ` Overdraft outstanding: ${kes(usedMinor)}.`;
 }
 
 /**
  * The text for one statement row.
  *
  * @param {object} tx      a row as mpesaDemo shapes it
- * @param {object} wallet  the wallet it moved on, for the holder's name
- * @param {number} fulizaUsedMinor  what is owed after the move
+ * @param {object} wallet  the wallet it moved on, for the holder's name and number
+ * @param {number} fulizaUsedMinor  what is owed on the overdraft after the move
  */
 export function messageFor(tx, wallet, fulizaUsedMinor = 0) {
-  const { date, time } = stamp(tx.at);
-  const ref = tx.reference;
-  const amount = ksh(Math.abs(tx.amountMinor));
-  const balance = ksh(tx.balanceAfterMinor);
-  const fuliza = fulizaLine(fulizaUsedMinor);
-  const counterparty = (tx.subtitle || '').trim();
+  const head = `Ref:${novRef(tx)}: Dear ${firstName(wallet)},`;
+  const when = stamp(tx.at);
+  const amount = kes(Math.abs(tx.amountMinor));
+  const balance = `Wallet balance: ${kes(tx.balanceAfterMinor)}.`;
+  const owed = overdraftLine(fulizaUsedMinor);
+  const number = maskedNumber(wallet?.phone);
+  const from = (tx.subtitle || '').trim();
+  const tail = ` ${balance}${owed} ${SIGN_OFF}`;
 
   switch (tx.kind) {
-    /* Money leaving the phone for the trading account: a till payment,
-       which is what it would be in life. */
+    /* Money leaving the wallet for the trading account. */
     case 'DEPOSIT':
-      return `${ref} Confirmed. ${amount} paid to ${MERCHANT}.` +
-        ` on ${date} at ${time}.New M-PESA balance is ${balance}.` +
-        ` Transaction cost, Ksh0.00.` + fuliza;
+      return `${head} ${amount} has been paid from your wallet${number ? ' ' + number : ''}` +
+        ` to ${MERCHANT} at ${when}.` + tail;
 
-    /* A payout arriving from the trading account. */
+    /* A payout from the trading account arriving in the wallet. */
     case 'WITHDRAWAL':
-      return `${ref} Confirmed.You have received ${amount} from ${MERCHANT}` +
-        ` on ${date} at ${time} New M-PESA balance is ${balance}.` + fuliza;
+      return `${head} You have received ${amount} in your wallet from ${MERCHANT}` +
+        ` at ${when}.` + tail;
 
-    /* Cash off the phone at an agent. The agent's number and name sit
-       where Safaricom puts them, and the demo's own subtitle supplies
-       whatever the operator typed. */
-    case 'AGENT_WITHDRAWAL':
-      return `${ref} Confirmed.on ${date} at ${time} Withdraw ${amount} from` +
-        ` ${counterparty || 'Agent'} New M-PESA balance is ${balance}.` +
-        ` Transaction cost, Ksh0.00.` + fuliza;
-
+    /* Money sent into the wallet by somebody else. */
     case 'RECEIVE':
-      return `${ref} Confirmed.You have received ${amount} from` +
-        ` ${counterparty || MERCHANT} on ${date} at ${time}` +
-        ` New M-PESA balance is ${balance}.` + fuliza;
+      return `${head} You have received ${amount} in your wallet from ${from || 'a sender'}` +
+        ` at ${when}.` + tail;
 
-    /* A deposit that could not be completed, put back. The customer sees
-       the money return and is told why, which is the whole point of
-       sending this one rather than letting the balance quietly change. */
+    /* Cash taken out at an agent. */
+    case 'AGENT_WITHDRAWAL':
+      return `${head} You have withdrawn ${amount} from your wallet at ${from || 'an agent'}` +
+        ` at ${when}.` + tail;
+
+    /* A deposit that could not be completed, put back. */
     case 'REVERSAL':
-      return `${ref} Confirmed. Reversal of transaction ${ref} has been` +
-        ` successfully processed on ${date} at ${time}. ${amount} has been` +
-        ` credited to your M-PESA account. New M-PESA balance is ${balance}.`;
+      return `${head} Your payment of ${amount} to ${MERCHANT} could not be completed` +
+        ` and has been returned to your wallet at ${when}.` + tail;
 
     case 'FULIZA_REPAY':
-      return `${ref} Confirmed. ${amount} of your Fuliza M-PESA has been repaid` +
-        ` on ${date} at ${time}. New M-PESA balance is ${balance}.` + fuliza;
+      return `${head} ${amount} of your wallet overdraft has been repaid at ${when}.` + tail;
 
     default:
-      return `${ref} Confirmed. ${amount} on ${date} at ${time}.` +
-        ` New M-PESA balance is ${balance}.` + fuliza;
+      return `${head} ${amount} moved on your wallet at ${when}.` + tail;
   }
 }
 
 /**
- * Send the confirmation for a movement. Fire and forget: the caller has
- * already moved the money, and an SMS that does not go out must not
- * unwind a transaction that did.
+ * Send the text for a movement. Fire and forget: the caller has already
+ * moved the money, and an SMS that does not go out must not unwind a
+ * transaction that did.
  *
  * @param {object} wallet  the wallet after the move — it carries the phone
  * @param {object} moved   what mpesaDemo.move() returned
@@ -145,14 +145,14 @@ export async function notifyMovement(wallet, moved) {
       {
         userId: wallet.userId,
         reference: moved.tx.reference,
-        what: `an M-PESA ${String(moved.tx.kind).toLowerCase()} confirmation`
+        what: `a Novi Wallet ${String(moved.tx.kind).toLowerCase()} text`
       }
     );
   } catch (err) {
     /* Belt and braces: this function is called without await in places,
        and an unhandled rejection from a text message must not be what
        takes the process down mid-demo. */
-    events.error('sms', 'Confirmation text threw: ' + (err?.message || 'unknown'), {
+    events.error('sms', 'Wallet text threw: ' + (err?.message || 'unknown'), {
       userId: wallet?.userId
     });
     return { ok: false, status: 'down', detail: err?.message || 'unknown' };
@@ -160,13 +160,10 @@ export async function notifyMovement(wallet, moved) {
 }
 
 /* What an operator sends to themselves before the room fills up, to
-   prove the sender ID is live and the number is right. Deliberately not
-   a fake transaction: nobody should be able to point at a test and say
-   it looked exactly like money arriving. */
+   prove the sender works and the number is right. Not a transaction. */
 export function testMessage(name) {
-  return `Hello ${name || 'there'}, this is a test from ${MERCHANT}.` +
-    ' Your M-PESA demo handset is set up and confirmation messages will' +
-    ' arrive on this number.';
+  return `Dear ${String(name || '').trim().split(/\s+/)[0] || 'Customer'}, this is a test from ${MERCHANT}.` +
+    ' Your Novi Wallet is set up and its texts will arrive on this number.';
 }
 
 export { MERCHANT };
