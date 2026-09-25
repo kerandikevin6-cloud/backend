@@ -181,8 +181,24 @@ router.post('/',
       let balance = null;
       const refused = [];
 
+      /* A real trade from before this account existed cannot be this
+         account's. The browser used to send whatever history it held,
+         including the last person's on a shared device, and their wins
+         landed on this balance. Refused here whatever the browser does. */
+      const { data: me } = await admin
+        .from('profiles').select('created_at').eq('id', req.user.id).maybeSingle();
+      const bornAt = me?.created_at ? new Date(me.created_at).getTime() : null;
+
       for (const row of (data || [])) {
         if (row.account_kind !== 'real') continue;
+        if (bornAt && new Date(row.opened_at).getTime() < bornAt - 60000) {
+          refused.push({ ref: row.client_ref, reason: 'TRADE_BEFORE_ACCOUNT' });
+          events.warn('trades', 'Refused a real trade from before the account existed', {
+            userId: req.user.id,
+            context: { clientRef: row.client_ref, openedAt: row.opened_at, accountCreated: me.created_at }
+          });
+          continue;
+        }
         const { data: after, error: moveError } = await admin.rpc('settle_trade', {
           p_user_id: req.user.id,
           p_client_ref: row.client_ref,
