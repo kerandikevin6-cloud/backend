@@ -792,7 +792,7 @@ router.get('/tickets',
       if (ids.length) {
         const { data: profiles } = await admin
           .from('profiles')
-          .select('id,display_name,email,phone,country,tier')
+          .select('id,display_name,email,phone,country,tier,demo_mode')
           .in('id', ids);
         for (const p of profiles || []) people[p.id] = p;
       }
@@ -808,6 +808,7 @@ router.get('/tickets',
             userEmail: who?.email || null,
             userPhone: who?.phone || null,
             userTier: who?.tier || 'standard',
+            userDemoMode: !!who?.demo_mode,
             category: t.category,
             body: t.body,
             status: t.status,
@@ -886,7 +887,7 @@ router.get('/verifications',
       if (ids.length) {
         const { data: profiles } = await admin
           .from('profiles')
-          .select('id,display_name,email,phone,country,kyc_status,tier,created_at')
+          .select('id,display_name,email,phone,country,kyc_status,tier,demo_mode,created_at')
           .in('id', ids);
         for (const p of profiles || []) people[p.id] = p;
       }
@@ -921,6 +922,7 @@ router.get('/verifications',
           userPhone: who?.phone || null,
           userCountry: who?.country || null,
           userTier: who?.tier || 'standard',
+          userDemoMode: !!who?.demo_mode,
           userJoined: who?.created_at || null,
           kind: row.kind,
           status: row.status,
