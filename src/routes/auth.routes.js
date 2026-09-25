@@ -10,7 +10,7 @@ import { anon, admin } from '../lib/supabase.js';
 import { validate } from '../middleware/validate.js';
 import { requireAuth, requireAuthStrict } from '../middleware/auth.js';
 import { authLimiter, resetLimiter } from '../middleware/rateLimit.js';
-import { badRequest, unauthorized, HttpError } from '../lib/errors.js';
+import { badRequest, unauthorized, forbidden, conflict, HttpError } from '../lib/errors.js';
 import { env } from '../config/env.js';
 import { normalisePhone, maskPhone } from '../lib/phone.js';
 import { events } from '../lib/events.js';
@@ -422,6 +422,103 @@ router.post('/logout', requireAuth, async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
+/* ---------------- delete the account ----------------
+   Removes the person completely. Every table that holds their data is
+   tied to the auth user with ON DELETE CASCADE (profile, balances,
+   ledger, payments, withdrawals, trades, verification records, tickets,
+   runs), so deleting the auth user takes all of it in one step. The ID
+   documents live in Storage, which no foreign key reaches, so those are
+   removed first, by hand.
+
+   Refused while it would cost the customer money or strand a payment:
+     * a real balance above zero (withdraw it first)
+     * a deposit still pending (it could land on an account that is gone)
+     * a withdrawal still open
+   and for staff, so nobody can lock the console by deleting themselves.
+
+   Confirmed twice: the word DELETE, and the password for an account that
+   signs in with one. The session is checked with Supabase, not locally,
+   so a token from a signed-out session cannot do this. */
+router.post('/account/delete',
+  authLimiter,
+  requireAuthStrict,
+  validate(z.object({
+    confirm: z.literal('DELETE', { errorMap: () => ({ message: 'Type DELETE to confirm' }) }),
+    password: z.string().max(200).optional()
+  })),
+  async (req, res, next) => {
+    try {
+      const userId = req.user.id;
+
+      const { data: profile } = await admin
+        .from('profiles').select('id,email,role').eq('id', userId).maybeSingle();
+      if (profile && profile.role && profile.role !== 'customer') {
+        throw forbidden('Staff accounts cannot be deleted from here.');
+      }
+
+      /* Password, for an account that has one. */
+      const provider = req.user.app_metadata?.provider || 'email';
+      if (provider === 'email') {
+        if (!req.body.password) {
+          throw badRequest('Enter your password to confirm', { password: 'Required' });
+        }
+        const { error: pwError } = await anon.auth.signInWithPassword({
+          email: req.user.email, password: req.body.password
+        });
+        if (pwError) throw badRequest('That password is not right', { password: 'Not right' });
+      }
+
+      /* Nothing left in flight, nothing left in the account. */
+      const { data: accounts } = await admin
+        .from('accounts').select('kind,balance_minor').eq('user_id', userId);
+      const real = (accounts || []).find(a => a.kind === 'real');
+      if (real && Number(real.balance_minor) > 0) {
+        throw conflict('Withdraw your real balance before deleting the account.', {
+          balanceMinor: Number(real.balance_minor)
+        });
+      }
+
+      const { count: pendingDeposits } = await admin
+        .from('payments').select('id', { count: 'exact', head: true })
+        .eq('user_id', userId).eq('status', 'pending');
+      if (pendingDeposits) {
+        throw conflict('A deposit is still being processed. Try again once it has cleared.');
+      }
+
+      const { count: openWithdrawals } = await admin
+        .from('withdrawal_requests').select('id', { count: 'exact', head: true })
+        .eq('user_id', userId).in('status', ['pending', 'approved']);
+      if (openWithdrawals) {
+        throw conflict('A withdrawal is still in progress. Try again once it has been paid.');
+      }
+
+      /* The documents, which no cascade reaches. */
+      try {
+        const bucket = admin.storage.from('kyc');
+        const { data: files } = await bucket.list(userId, { limit: 1000 });
+        const paths = (files || []).map(f => userId + '/' + f.name);
+        if (paths.length) await bucket.remove(paths);
+      } catch (e) {
+        /* Logged rather than fatal: the account still goes, and the note
+           says which folder to clear by hand. */
+        events.error('auth', 'Could not remove verification files on account deletion', {
+          userId, context: { folder: 'kyc/' + userId, error: e?.message }
+        });
+      }
+
+      const { error } = await admin.auth.admin.deleteUser(userId);
+      if (error) throw new HttpError(500, 'delete_failed', error.message);
+
+      /* The event row keeps no link to the user (it was set null by the
+         delete), so the address is recorded to say who it was. */
+      events.info('auth', 'Account deleted by its owner', {
+        context: { userId, email: profile?.email || req.user.email || null }
+      });
+
+      res.json({ ok: true, deleted: true });
+    } catch (err) { next(err); }
+  });
+
 /* Only what the client needs. No provider tokens, no raw metadata. */
 function publicSession(session) {
   return {
@@ -436,7 +533,9 @@ function publicUser(user) {
     id: user.id,
     email: user.email,
     name: user.user_metadata?.full_name || null,
-    createdAt: user.created_at || null
+    createdAt: user.created_at || null,
+    /* email | google: whether deleting the account asks for a password. */
+    provider: user.app_metadata?.provider || 'email'
   };
 }
 

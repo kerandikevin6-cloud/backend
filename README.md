@@ -28,6 +28,7 @@ Then in Supabase → SQL editor, run `sql/001_schema.sql` and `sql/002_policies.
 | GET  | `/auth/session` | profile and balances |
 | POST | `/auth/refresh` | new access token |
 | POST | `/auth/logout` | |
+| POST | `/auth/account/delete` | `{ confirm: "DELETE", password }`. Deletes the user and everything tied to them, and their verification files. Refused with a real balance above zero, a pending deposit, an open withdrawal, or for staff |
 
 ### Deposits
 | Method | Path | Notes |
