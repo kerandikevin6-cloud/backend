@@ -65,7 +65,9 @@ export async function initializeTransaction({ email, amountMinor, currency, refe
  * Docs: https://paystack.com/docs/payments/payment-channels/#mobile-money
  *
  * Amount is KES in cents, which is what Paystack wants. The phone goes
- * with its country code and no plus, 254700000000, as in their example.
+ * as +254722000000: their docs say "0722000000 should be sent as
+ * +254722000000". (The JSON example on the same page shows it without
+ * the plus, and Paystack answered that with "invalid phone number".)
  * Needs a Paystack account for a Kenyan business, charging in KES.
  *
  * Paystack answers "pay_offline" when the prompt is on its way, and the
@@ -80,7 +82,7 @@ export async function chargeMpesa({ email, amountMinor, currency, phone, referen
       amount: amountMinor,
       currency: currency || 'KES',
       reference,
-      mobile_money: { phone: String(phone).replace(/\D/g, ''), provider: 'mpesa' },
+      mobile_money: { phone: paystackPhone(phone), provider: 'mpesa' },
       metadata: metadata || {}
     })
   });
@@ -88,6 +90,15 @@ export async function chargeMpesa({ email, amountMinor, currency, phone, referen
     throw upstream(data.gateway_response || data.message || 'M-Pesa declined the request');
   }
   return data;
+}
+
+/* Any form of a Kenyan number to +2547XXXXXXXX: 0712.., 712.., 254712..,
+   +254712... */
+function paystackPhone(phone) {
+  let d = String(phone || '').replace(/\D/g, '');
+  if (d.startsWith('254')) d = d.slice(3);
+  if (d.startsWith('0')) d = d.slice(1);
+  return '+254' + d;
 }
 
 /**
