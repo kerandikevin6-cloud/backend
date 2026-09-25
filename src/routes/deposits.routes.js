@@ -108,6 +108,17 @@ router.post('/mpesa',
         return depositFromHandset(req, res, { phone, profile });
       }
 
+      /* PayHero switched off: straight to Paystack. */
+      if (env.MPESA_PRIMARY === 'paystack') {
+        return await promptViaPaystack(req, res, {
+          phone,
+          amountMinor: req.body.amountMinor,
+          currency: req.body.currency,
+          because: 'primary',
+          replaces: null
+        });
+      }
+
       try {
         payment = await createPending({
           userId: req.user.id,

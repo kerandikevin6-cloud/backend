@@ -114,6 +114,10 @@ const schema = z.object({
      too slow to answer), send it through Paystack instead. 'off' turns
      the fallback off and a PayHero failure is reported as before. */
   MPESA_FALLBACK: z.enum(['paystack', 'off']).default('paystack'),
+  /* Which rail sends the M-Pesa prompt first. 'paystack' skips PayHero
+     altogether: for testing the fallback, or for running without PayHero
+     while it is down. */
+  MPESA_PRIMARY: z.enum(['payhero', 'paystack']).default('payhero'),
   /* How long to wait for PayHero to accept the prompt before falling
      back. Its answer normally takes a second or two. */
   PAYHERO_PUSH_TIMEOUT_MS: z.coerce.number().int().min(3000).max(60000).default(15000),

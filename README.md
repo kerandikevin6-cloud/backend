@@ -41,7 +41,9 @@ takes longer than `PAYHERO_PUSH_TIMEOUT_MS` (15s) to accept it,
 `POST /deposits/mpesa` sends it through Paystack's M-Pesa charge instead and
 answers with `rail: "paystack"`. A PayHero push that only timed out is left
 pending, since the prompt may still arrive. Set `MPESA_FALLBACK=off` to turn
-it off. Needs M-Pesa enabled on the Paystack account (Kenya, KES).
+it off. `MPESA_PRIMARY=paystack` skips PayHero entirely and sends every
+M-Pesa prompt through Paystack. Needs a Paystack account for a Kenyan
+business, charging in KES.
 | GET  | `/deposits/:reference` | poll while the waiting screen is up |
 | GET  | `/deposits` | recent deposits |
 
