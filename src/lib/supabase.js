@@ -53,3 +53,12 @@ export function asUser(accessToken) {
     global: { fetch: fetchWithTimeout, headers: { Authorization: `Bearer ${accessToken}` } }
   });
 }
+
+/* Run a query or rpc for its side effect and never let it throw. Query
+   builders from supabase-js are thenables, not Promises, so they have no
+   .catch of their own: `admin.rpc(...).catch(...)` is itself a TypeError,
+   which used to replace the real error with a 500 on the way out of a
+   failed payment. */
+export function quietly(query) {
+  return Promise.resolve(query).then(r => r, () => null);
+}

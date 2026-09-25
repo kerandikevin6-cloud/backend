@@ -15,7 +15,7 @@
    ============================================================ */
 import { Router } from 'express';
 import { z } from 'zod';
-import { admin } from '../lib/supabase.js';
+import { admin, quietly } from '../lib/supabase.js';
 import { requireAuth } from '../middleware/auth.js';
 import { validate } from '../middleware/validate.js';
 import { paymentLimiter } from '../middleware/rateLimit.js';
@@ -163,11 +163,11 @@ router.post('/mpesa',
            timeout is different: the prompt may still arrive and be paid,
            so that row stays open and settles like any other if it is. */
         if (payment && !err.timedOut) {
-          await admin.rpc('fail_payment', {
+          await quietly(admin.rpc('fail_payment', {
             p_payment_id: payment.id,
             p_reason: err.message?.slice(0, 300) || 'stk push failed',
             p_raw: null
-          }).catch(() => {});
+          }));
         }
         events.error('payhero', 'STK push failed: ' + (err.message || 'unknown') +
           (env.MPESA_FALLBACK === 'paystack' ? ', trying Paystack' : ''), {
@@ -241,11 +241,11 @@ async function promptViaPaystack(req, res, { phone, amountMinor, currency, becau
     });
   } catch (err) {
     if (payment) {
-      await admin.rpc('fail_payment', {
+      await quietly(admin.rpc('fail_payment', {
         p_payment_id: payment.id,
         p_reason: err.message?.slice(0, 300) || 'paystack m-pesa failed',
         p_raw: null
-      }).catch(() => {});
+      }));
     }
     events.error('paystack', 'M-Pesa through Paystack failed: ' + (err.message || 'unknown'), {
       userId: req.user.id,
@@ -427,11 +427,11 @@ async function depositFromHandset(req, res, { phone, profile }) {
   } catch (err) {
     await refund();
     if (payment) {
-      await admin.rpc('fail_payment', {
+      await quietly(admin.rpc('fail_payment', {
         p_payment_id: payment.id,
         p_reason: 'demo rail could not settle',
         p_raw: null
-      }).catch(() => {});
+      }));
     }
     events.error('mpesa-demo', 'Deposit failed after the handset was debited, refunded: ' +
       (err.message || 'unknown'), { userId: req.user.id, reference });
@@ -500,11 +500,11 @@ router.post('/card',
       });
     } catch (err) {
       if (payment) {
-        await admin.rpc('fail_payment', {
+        await quietly(admin.rpc('fail_payment', {
           p_payment_id: payment.id,
           p_reason: err.message?.slice(0, 300) || 'initialize failed',
           p_raw: null
-        }).catch(() => {});
+        }));
       }
       events.error('paystack', 'Could not open a checkout: ' + (err.message || 'unknown'), {
         userId: req.user.id,

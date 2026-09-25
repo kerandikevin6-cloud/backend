@@ -10,7 +10,7 @@
    ============================================================ */
 import { Router } from 'express';
 import { z } from 'zod';
-import { admin } from '../lib/supabase.js';
+import { admin, quietly } from '../lib/supabase.js';
 import { requireAuth, requireAuthStrict } from '../middleware/auth.js';
 import { validate } from '../middleware/validate.js';
 import { paymentLimiter } from '../middleware/rateLimit.js';
@@ -205,11 +205,11 @@ async function withdrawToHandset(req, res, next) {
   } catch (err) {
     /* release_withdrawal takes a status, not an actor: 'cancelled' is
        what puts the held amount back on the balance. */
-    await admin.rpc('release_withdrawal', {
+    await quietly(admin.rpc('release_withdrawal', {
       p_request_id: request.id,
       p_status: 'cancelled',
       p_note: 'demo rail could not credit the handset'
-    }).catch(() => {});
+    }));
     events.error('mpesa-demo', 'Withdrawal failed after the balance was held, released: ' +
       (err.message || 'unknown'), { userId: req.user.id, context: { amountMinor } });
     throw err;
@@ -218,11 +218,11 @@ async function withdrawToHandset(req, res, next) {
   /* reviewed_by stays null on purpose: nobody reviewed this, the rail
      paid it. A staff id here would be a person's name against a payout
      they never saw. */
-  await admin.rpc('settle_withdrawal', {
+  await quietly(admin.rpc('settle_withdrawal', {
     p_request_id: request.id,
     p_actor: null,
     p_note: 'Paid to the M-Pesa demo handset'
-  }).catch(() => {});
+  }));
 
   events.info('mpesa-demo', 'VIP withdrawal paid onto the handset', {
     userId: req.user.id,
