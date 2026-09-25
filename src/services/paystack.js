@@ -65,8 +65,8 @@ export async function initializeTransaction({ email, amountMinor, currency, refe
  * Docs: https://paystack.com/docs/payments/payment-channels/#mobile-money
  *
  * Amount is KES in cents, which is what Paystack wants. The phone goes
- * in international form with a plus. Needs M-Pesa switched on for the
- * Paystack account (Kenya, KES).
+ * with its country code and no plus, 254700000000, as in their example.
+ * Needs a Paystack account for a Kenyan business, charging in KES.
  *
  * Paystack answers "pay_offline" when the prompt is on its way, and the
  * charge settles through the same webhook and verify call a card does.
@@ -80,7 +80,7 @@ export async function chargeMpesa({ email, amountMinor, currency, phone, referen
       amount: amountMinor,
       currency: currency || 'KES',
       reference,
-      mobile_money: { phone: '+' + String(phone).replace(/^\+/, ''), provider: 'mpesa' },
+      mobile_money: { phone: String(phone).replace(/\D/g, ''), provider: 'mpesa' },
       metadata: metadata || {}
     })
   });
