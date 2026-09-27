@@ -168,9 +168,9 @@ export function messageFor(
     case 'WITHDRAWAL':
       return (
         `${reference} Confirmed. ` +
-        `You have received ${amount} in your Novi Wallet ` +
+        `You have received ${amount}  ` +
         `from ${MERCHANT} on ${when}. ` +
-        `Novi Wallet balance is ${balance}.` +
+        `New M-PESA balance is ${balance}.` +
         `${owed} ${SIGN_OFF}`
       );
 
