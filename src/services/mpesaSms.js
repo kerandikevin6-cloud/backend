@@ -151,12 +151,13 @@ export function messageFor(
     /*
      * Money leaving Novi Wallet for the trading account.
      */
+
     case 'DEPOSIT':
       return (
         `${reference} Confirmed. ` +
-        `You have paid ${amount} from your Novi Wallet` +
-        `${number ? ` ${number}` : ''} ` +
-        `to ${MERCHANT} on ${when}. ` +
+        `${amount} sent to ${MERCHANT}` +
+        `${number ? ` from ${number}` : ''} ` +
+        `on ${when}. ` +
         `New M-PESA balance is ${balance}.` +
         `${owed} ${SIGN_OFF}`
       );
