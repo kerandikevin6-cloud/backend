@@ -31,10 +31,10 @@ const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY ||
 /* ---------- product rules ----------
    Minor units (cents). 10000 = KES 100.00 */
 const RULES = {
-  /* The rails collect shillings, so this is shillings: USD 5 at the rate
+  /* The rails collect shillings, so this is shillings: USD 10 at the rate
      below. The customer types dollars and never sees this figure except
      on the line that says what the phone will actually be debited. */
-  MIN_DEPOSIT_MINOR: 64500,        /* KES 645, i.e. USD 5 */
+  MIN_DEPOSIT_MINOR: 129000,       /* KES 1,290, i.e. USD 10 */
   MAX_DEPOSIT_MINOR: 15000000,     /* KES 150,000 */
   /* Withdrawals are requested in USD cents, which is what the balance is
      held in and, now, what the whole product is quoted in. */
@@ -51,7 +51,7 @@ const RULES = {
      sent over the wrong chain is gone. */
   USDT_ADDRESS: process.env.USDT_ADDRESS || 'TXqLJrvZc9ouyVPai66WR55dvDVetR83BH',
   USDT_NETWORK: 'TRC-20',
-  MIN_USDT_MINOR: 500,             /* USD 5, and USDT is quoted 1:1 */
+  MIN_USDT_MINOR: 1000,            /* USD 10, and USDT is quoted 1:1 */
 
   /* Render puts a proxy in front of the service, so the real client IP
      arrives in X-Forwarded-For. Without this, rate limiting sees one
