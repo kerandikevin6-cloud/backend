@@ -49,7 +49,7 @@ const RULES = {
      One address and one chain on purpose: a customer choosing a network
      from a menu is a customer who can choose the wrong one, and USDT
      sent over the wrong chain is gone. */
-  USDT_ADDRESS: process.env.USDT_ADDRESS || 'TXqLJrvZc9ouyVPai66WR55dvDVetR83BH',
+  USDT_ADDRESS: process.env.USDT_ADDRESS || 'TLEDGCXYvTkUdEUYdCY7oHRN9vRKfWkngq',
   USDT_NETWORK: 'TRC-20',
   MIN_USDT_MINOR: 1000,            /* USD 10, and USDT is quoted 1:1 */
 
