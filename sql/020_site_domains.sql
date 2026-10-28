@@ -21,6 +21,11 @@ insert into public.domains (host, label, status)
 values ('zenobinary.com', 'ZenoBinary', 'live')
 on conflict (host) do nothing;
 
+-- nexas.trade was the primary in the first version of 004, before the
+-- product moved to novibinary.com. It was never a site anyone used, and
+-- a database that ran the old seed still lists it.
+delete from public.domains where host = 'nexas.trade';
+
 -- ---------- money per domain ----------
 -- Users by the site they signed up on; deposits by the site each one was
 -- made through, falling back to the account's site and then to the
