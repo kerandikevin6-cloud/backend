@@ -26,6 +26,13 @@ on conflict (host) do nothing;
 -- a database that ran the old seed still lists it.
 delete from public.domains where host = 'nexas.trade';
 
+-- Those databases never got novibinary.com either, since the old seed
+-- listed nexas.trade in its place. Make sure the primary is there, dated
+-- first so the console lists it at the top.
+insert into public.domains (host, label, status, created_at)
+values ('novibinary.com', 'Primary', 'live', now() - interval '1 year')
+on conflict (host) do update set label = 'Primary', status = 'live';
+
 -- ---------- money per domain ----------
 -- Users by the site they signed up on; deposits by the site each one was
 -- made through, falling back to the account's site and then to the
