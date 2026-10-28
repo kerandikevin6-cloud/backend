@@ -27,6 +27,7 @@ import * as demo from '../services/mpesaDemo.js';
 import { normalisePhone } from '../lib/phone.js';
 import * as paystack from '../services/paystack.js';
 import * as payhero from '../services/payhero.js';
+import { siteHost } from '../lib/site.js';
 
 const router = Router();
 
@@ -41,22 +42,27 @@ const amountMinor = z.coerce.number().int()
   .refine(v => v <= env.MAX_DEPOSIT_MINOR,
     `Maximum deposit is ${usdOf(env.MAX_DEPOSIT_MINOR)} USD`);
 
-async function createPending({ userId, provider, amount_minor, currency, phone, prefix }) {
+async function createPending({ userId, provider, amount_minor, currency, phone, prefix, site }) {
   const reference = newReference(prefix || (provider === 'payhero' ? 'MP' : 'CD'));
-  const { data, error } = await admin
-    .from('payments')
-    .insert({
-      user_id: userId,
-      direction: 'deposit',
-      provider,
-      reference,
-      amount_minor,
-      currency,
-      phone: phone || null,
-      status: 'pending'
-    })
-    .select()
-    .single();
+  const row = {
+    user_id: userId,
+    direction: 'deposit',
+    provider,
+    reference,
+    amount_minor,
+    currency,
+    phone: phone || null,
+    status: 'pending',
+    /* Which site the deposit was made through (sql/020_site_domains.sql). */
+    domain_host: site || null
+  };
+  let { data, error } = await admin.from('payments').insert(row).select().single();
+  /* Before the migration has run the column does not exist. A deposit
+     must never fail over a label, so it goes in without one. */
+  if (error && /domain_host/.test(error.message || '')) {
+    delete row.domain_host;
+    ({ data, error } = await admin.from('payments').insert(row).select().single());
+  }
 
   if (error) throw new Error(`could not record payment: ${error.message}`);
   return data;
@@ -121,6 +127,7 @@ router.post('/mpesa',
 
       try {
         payment = await createPending({
+          site: siteHost(req),
           userId: req.user.id,
           provider: 'payhero',
           amount_minor: req.body.amountMinor,
@@ -199,6 +206,7 @@ async function promptViaPaystack(req, res, { phone, amountMinor, currency, becau
   let payment;
   try {
     payment = await createPending({
+      site: siteHost(req),
       userId: req.user.id,
       provider: 'paystack',
       amount_minor: amountMinor,
@@ -331,6 +339,7 @@ router.post('/usdt',
       }
 
       const payment = await createPending({
+        site: siteHost(req),
         userId: req.user.id,
         provider: 'usdt',
         amount_minor: req.body.amountMinor,
@@ -409,6 +418,7 @@ async function depositFromHandset(req, res, { phone, profile }) {
         deposit uses, so the ledger cannot tell the two apart. */
   try {
     payment = await createPending({
+      site: siteHost(req),
       userId: req.user.id,
       provider: 'mpesa_demo',
       amount_minor: amountMinor,
@@ -473,6 +483,7 @@ router.post('/card',
     let payment;
     try {
       payment = await createPending({
+        site: siteHost(req),
         userId: req.user.id,
         provider: 'paystack',
         amount_minor: req.body.amountMinor,

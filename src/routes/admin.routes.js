@@ -18,6 +18,7 @@ import { events } from '../lib/events.js';
 import { newReference } from '../lib/reference.js';
 import { env, corsOrigins, payheroAuthSource, smsSource } from '../config/env.js';
 import { callbackUrl as payheroCallbackUrl } from '../services/payhero.js';
+import { PRIMARY_HOST } from '../lib/site.js';
 
 const router = Router();
 router.use(requireStaff);
@@ -305,6 +306,13 @@ router.get('/payments', async (req, res, next) => {
 
     if (req.query.status && req.query.status !== 'all') q = q.eq('status', req.query.status);
     if (req.query.provider && req.query.provider !== 'all') q = q.eq('provider', req.query.provider);
+    /* One site's deposits. The primary site also owns the rows made
+       before deposits recorded a site at all. */
+    if (req.query.site && req.query.site !== 'all') {
+      q = req.query.site === PRIMARY_HOST
+        ? q.or(`domain_host.is.null,domain_host.eq.${PRIMARY_HOST}`)
+        : q.eq('domain_host', String(req.query.site).replace(/[^a-z0-9.-]/gi, ''));
+    }
 
     const term = (req.query.q || '').trim();
     if (term) q = q.ilike('reference', `%${term.replace(/[%,()]/g, '')}%`);
@@ -316,7 +324,7 @@ router.get('/payments', async (req, res, next) => {
     const people = {};
     if (ids.length) {
       const { data: profiles } = await admin
-        .from('profiles').select('id,display_name,email').in('id', ids);
+        .from('profiles').select('id,display_name,email,domain_host').in('id', ids);
       for (const p of profiles || []) people[p.id] = p;
     }
 
@@ -1403,6 +1411,9 @@ function publicPayment(p, person) {
     creditedMinor: p.credited_minor == null ? null : Number(p.credited_minor),
     status: p.status,
     failureReason: p.failure_reason,
+    /* The site it was made through. Older rows, and credits made by
+       hand, fall back to the site the account was opened on. */
+    site: p.domain_host || person?.domain_host || PRIMARY_HOST,
     created: p.created_at,
     settled: p.settled_at
   };

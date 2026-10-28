@@ -14,6 +14,7 @@ import { badRequest, unauthorized, forbidden, conflict, HttpError } from '../lib
 import { env } from '../config/env.js';
 import { normalisePhone, maskPhone } from '../lib/phone.js';
 import { events } from '../lib/events.js';
+import { siteHost } from '../lib/site.js';
 
 const router = Router();
 
@@ -70,6 +71,10 @@ router.post('/signup',
         const patch = {};
         if (phone) patch.phone = normalisePhone(phone, country) || null;
         if (country) patch.country = country;
+        /* The site the account was opened on, for the console's Domains
+           and Payments pages. */
+        const site = siteHost(req);
+        if (site) patch.domain_host = site;
 
         if (referralCode) {
           const { data: referrer } = await admin
@@ -277,6 +282,18 @@ router.get('/session', requireAuth, async (req, res, next) => {
        row has one, made in the same moment as the account. */
     const user = publicUser(req.user);
     if (!user.createdAt && row?.created_at) user.createdAt = row.created_at;
+
+    /* A Google sign-up never passes through /signup, so its site is
+       recorded here, on the first session check of a brand new account.
+       Best effort: it must never stand between someone and the app. */
+    if (row?.created_at && Date.now() - new Date(row.created_at).getTime() < 30 * 60 * 1000) {
+      const site = siteHost(req);
+      if (site) {
+        admin.from('profiles').update({ domain_host: site })
+          .eq('id', req.user.id).is('domain_host', null)
+          .then(() => undefined, () => undefined);
+      }
+    }
 
     res.json({ ok: true, user, profile, accounts: accounts || [] });
   } catch (err) { next(err); }
