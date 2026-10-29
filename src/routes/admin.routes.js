@@ -19,6 +19,7 @@ import { newReference } from '../lib/reference.js';
 import { env, corsOrigins, payheroAuthSource, smsSource } from '../config/env.js';
 import { callbackUrl as payheroCallbackUrl } from '../services/payhero.js';
 import { PRIMARY_HOST } from '../lib/site.js';
+import { refreshDomains } from '../lib/origins.js';
 
 const router = Router();
 router.use(requireStaff);
@@ -535,6 +536,8 @@ router.post('/domains',
         throw new HttpError(400, 'domain_failed', error.message);
       }
       await audit(req, 'domain.create', data.host, { label: data.label });
+      /* the API starts (or stops) answering this site now, not in a minute */
+      await refreshDomains();
       res.status(201).json({ ok: true, domain: data });
     } catch (err) { next(err); }
   });
@@ -563,6 +566,7 @@ router.patch('/domains/:host',
       if (!data) throw notFound('No such domain');
 
       await audit(req, 'domain.update', data.host, req.body);
+      await refreshDomains();
       res.json({ ok: true, domain: data });
     } catch (err) { next(err); }
   });
