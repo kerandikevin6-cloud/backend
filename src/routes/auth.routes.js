@@ -15,6 +15,21 @@ import { env } from '../config/env.js';
 import { normalisePhone, maskPhone } from '../lib/phone.js';
 import { events } from '../lib/events.js';
 import { siteHost } from '../lib/site.js';
+import { originKnown } from '../lib/origins.js';
+/* Where a sign-in, confirmation or reset link sends the person back to.
+   Several sites share this API, so it is the site the request came from
+   (when it is one of ours), not one fixed address: otherwise somebody
+   signing in on one site lands, signed in, on another. Each site's
+   addresses must be on Supabase's Redirect URLs list, or Supabase falls
+   back to its Site URL. */
+function appUrlFor(req) {
+  const raw = req.get('origin') || req.get('referer') || '';
+  try {
+    const url = new URL(raw);
+    if (originKnown(url.origin) && !/^(localhost|127\.0\.0\.1)$/.test(url.hostname)) return url.origin;
+  } catch (e) { /* no usable origin */ }
+  return env.APP_URL.replace(/\/+$/, '');
+}
 
 const router = Router();
 
@@ -48,7 +63,7 @@ router.post('/signup',
         password: pass,
         options: {
           data: { full_name: name, country },
-          emailRedirectTo: `${env.APP_URL}/login?confirmed=1`
+          emailRedirectTo: `${appUrlFor(req)}/login?confirmed=1`
         }
       });
 
@@ -156,7 +171,7 @@ router.get('/google', async (req, res, next) => {
        and an assumption for no reason, and every one of these addresses
        has to be on the Supabase redirect allow-list by hand, where two
        spellings of the same page is one more thing to get wrong. */
-    const redirectTo = `${env.APP_URL}/login?oauth=1`;
+    const redirectTo = `${appUrlFor(req)}/login?oauth=1`;
     const { data, error } = await anon.auth.signInWithOAuth({
       provider: 'google',
       options: { redirectTo, skipBrowserRedirect: true }
@@ -185,7 +200,7 @@ router.post('/forgot-password',
   async (req, res, next) => {
     try {
       await anon.auth.resetPasswordForEmail(req.body.email, {
-        redirectTo: `${env.APP_URL}/reset-password`
+        redirectTo: `${appUrlFor(req)}/reset-password`
       });
       /* Always the same answer, whether or not the address is on file. */
       res.json({
