@@ -20,6 +20,8 @@ import { env, corsOrigins, payheroAuthSource, smsSource } from '../config/env.js
 import { callbackUrl as payheroCallbackUrl } from '../services/payhero.js';
 import { PRIMARY_HOST } from '../lib/site.js';
 import { refreshDomains } from '../lib/origins.js';
+import { withFigures } from '../lib/sessionFigures.js';
+import { hashPassword } from '../lib/hosts.js';
 
 const router = Router();
 router.use(requireStaff);
@@ -601,28 +603,6 @@ router.patch('/domains/:host',
   });
 
 /* ---------------- marketing sessions ---------------- */
-async function withFigures(row) {
-  const { data } = await admin.rpc('session_figures', { p_session_id: row.id });
-  const f = data || {};
-  return {
-    id: row.id,
-    channel: row.channel,
-    handler: row.handler,
-    domain: row.domain_host,
-    note: row.note,
-    adSpendMinor: Number(row.ad_spend_minor),
-    status: row.status,
-    startedAt: row.started_at,
-    endedAt: row.ended_at,
-    depositsMinor: Number(f.depositsMinor || 0),
-    withdrawalsMinor: Number(f.withdrawalsMinor || 0),
-    stakeVolumeMinor: Number(f.stakeVolumeMinor || 0),
-    marginMinor: Number(f.marginMinor || 0),
-    signups: Number(f.signups || 0),
-    trades: Number(f.trades || 0)
-  };
-}
-
 router.get('/sessions', async (req, res, next) => {
   try {
     const { data, error } = await admin
@@ -639,15 +619,26 @@ router.post('/sessions',
   validate(z.object({
     channel: z.string().trim().min(1, 'Pick a channel'),
     handler: z.string().trim().min(1, 'Who is hosting it?'),
+    hostId: z.string().uuid().optional(),
     domain: z.string().trim().optional(),
     note: z.string().trim().max(200).optional(),
     adSpendMinor: z.coerce.number().int().min(0)
   })),
   async (req, res, next) => {
     try {
+      /* A host picked from the list: the session is theirs and shows on
+         their own page. The name on the session is the host's name. */
+      let host = null;
+      if (req.body.hostId) {
+        const { data: h } = await admin.from('hosts').select('id,name,status')
+          .eq('id', req.body.hostId).maybeSingle();
+        if (!h) throw notFound('No such host');
+        host = h;
+      }
       const { data, error } = await admin.from('sessions').insert({
         channel: req.body.channel,
-        handler: req.body.handler,
+        handler: host ? host.name : req.body.handler,
+        host_id: host ? host.id : null,
         domain_host: req.body.domain || null,
         note: req.body.note || null,
         ad_spend_minor: req.body.adSpendMinor,
@@ -682,6 +673,82 @@ router.post('/sessions/:id/end',
 
       await audit(req, 'session.end', data.id, { channel: data.channel });
       res.json({ ok: true, session: await withFigures(data) });
+    } catch (err) { next(err); }
+  });
+
+/* ---------------- session hosts ----------------
+   The people who run live sessions. They sign in at /host/ on the
+   console with the username and password made here, and see only
+   their own sessions. */
+const HOST_ROLES = ['admin', 'super_admin', 'manager', 'marketing'];
+const publicHost = h => ({
+  id: h.id, name: h.name, username: h.username, status: h.status,
+  createdAt: h.created_at, lastSeenAt: h.last_seen_at
+});
+
+router.get('/hosts', async (req, res, next) => {
+  try {
+    const { data, error } = await admin.from('hosts')
+      .select('id,name,username,status,created_at,last_seen_at')
+      .order('created_at', { ascending: true });
+    if (error) throw new HttpError(500, 'hosts_failed', error.message);
+    res.json({ ok: true, hosts: (data || []).map(publicHost) });
+  } catch (err) { next(err); }
+});
+
+router.post('/hosts', requireRole(...HOST_ROLES),
+  validate(z.object({
+    name: z.string().trim().min(1, "Enter the host's name").max(80),
+    username: z.string().trim().min(3, 'At least 3 characters').max(40)
+      .regex(/^[a-z0-9._-]+$/i, 'Letters, numbers, dots, dashes and underscores only'),
+    password: z.string().min(8, 'At least 8 characters').max(200)
+  })),
+  async (req, res, next) => {
+    try {
+      const { data, error } = await admin.from('hosts').insert({
+        name: req.body.name,
+        username: req.body.username.toLowerCase(),
+        password_hash: hashPassword(req.body.password)
+      }).select().single();
+      if (error) {
+        if (/hosts_username_key|duplicate|unique/i.test(error.message)) {
+          throw conflict('That username is taken.');
+        }
+        throw new HttpError(400, 'host_failed', error.message);
+      }
+      /* Sessions already run under this name, before hosts had accounts,
+         become theirs so their page is not empty on day one. */
+      await admin.from('sessions').update({ host_id: data.id })
+        .is('host_id', null).ilike('handler', data.name.replace(/[%_\\]/g, ''));
+
+      await audit(req, 'host.create', data.id, { username: data.username });
+      res.status(201).json({ ok: true, host: publicHost(data) });
+    } catch (err) { next(err); }
+  });
+
+router.patch('/hosts/:id', requireRole(...HOST_ROLES),
+  validate(z.object({
+    name: z.string().trim().min(1).max(80).optional(),
+    status: z.enum(['active', 'disabled']).optional(),
+    password: z.string().min(8, 'At least 8 characters').max(200).optional()
+  })),
+  async (req, res, next) => {
+    try {
+      const patch = {};
+      if (req.body.name) patch.name = req.body.name;
+      if (req.body.status) patch.status = req.body.status;
+      if (req.body.password) patch.password_hash = hashPassword(req.body.password);
+      if (!Object.keys(patch).length) throw badRequest('Nothing to change');
+
+      const { data, error } = await admin.from('hosts').update(patch)
+        .eq('id', req.params.id).select().maybeSingle();
+      if (error) throw new HttpError(400, 'host_failed', error.message);
+      if (!data) throw notFound('No such host');
+
+      await audit(req, 'host.update', data.id, {
+        name: req.body.name, status: req.body.status, password: req.body.password ? 'changed' : undefined
+      });
+      res.json({ ok: true, host: publicHost(data) });
     } catch (err) { next(err); }
   });
 

@@ -30,6 +30,7 @@ import ticketRoutes from './routes/tickets.routes.js';
 import mpesaRoutes from './routes/mpesa.routes.js';
 import webhookRoutes from './routes/webhooks.routes.js';
 import adminRoutes from './routes/admin.routes.js';
+import hostRoutes from './routes/host.routes.js';
 
 const logger = pino({
   level: env.LOG_LEVEL,
@@ -142,6 +143,7 @@ app.use('/tickets', ticketRoutes);
    device token issued when its PIN was accepted. */
 app.use('/mpesa', mpesaRoutes);
 app.use('/admin', adminRoutes);
+app.use('/host', hostRoutes);
 
 app.use(notFoundHandler);
 app.use(errorHandler);
