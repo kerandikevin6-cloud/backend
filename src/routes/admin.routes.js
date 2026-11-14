@@ -334,13 +334,18 @@ router.get('/payments', async (req, res, next) => {
 
     /* Totals for the whole period, not just the rows on this page:
        "collected this month" has to count every deposit in the month. */
-    let sumMinor = 0, sumCount = 0;
+    let sumMinor = 0, sumCount = 0, bigMinor = 0;
+    const payers = new Set();
     for (let at = 0; at < 100000; at += 1000) {
       const { data: chunk, error: e2 } = await filtered(
-        admin.from('payments').select('amount_minor')
+        admin.from('payments').select('amount_minor,user_id')
       ).eq('status', 'success').order('created_at', { ascending: false }).range(at, at + 999);
       if (e2) throw new HttpError(500, 'payments_failed', e2.message);
-      for (const r of chunk || []) { sumMinor += Number(r.amount_minor) || 0; sumCount += 1; }
+      for (const r of chunk || []) {
+        const v = Number(r.amount_minor) || 0;
+        sumMinor += v; sumCount += 1; payers.add(r.user_id);
+        if (v > bigMinor) bigMinor = v;
+      }
       if (!chunk || chunk.length < 1000) break;
     }
 
@@ -355,7 +360,7 @@ router.get('/payments', async (req, res, next) => {
     res.json({
       ok: true,
       total: count ?? (data || []).length,
-      summary: { collectedMinor: sumMinor, count: sumCount },
+      summary: { collectedMinor: sumMinor, count: sumCount, depositors: payers.size, largestMinor: bigMinor },
       payments: (data || []).map(p => publicPayment(p, people[p.user_id]))
     });
   } catch (err) { next(err); }
