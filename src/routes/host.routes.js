@@ -47,7 +47,7 @@ async function requireHost(req, _res, next) {
       .from('hosts').select('id,name,username,status').eq('id', id).maybeSingle();
     if (!host) throw unauthorized();
     if (host.status !== 'active') throw forbidden('This account is switched off.');
-    req.host = host;
+    req.hostUser = host;
     next();
   } catch (err) { next(err); }
 }
@@ -56,13 +56,13 @@ router.get('/me', requireHost, async (req, res, next) => {
   try {
     const { data, error } = await admin
       .from('sessions').select('*')
-      .eq('host_id', req.host.id)
+      .eq('host_id', req.hostUser.id)
       .order('started_at', { ascending: false })
       .limit(200);
     if (error) throw new HttpError(500, 'sessions_failed', error.message);
 
     admin.from('hosts').update({ last_seen_at: new Date().toISOString() })
-      .eq('id', req.host.id).then(() => {}, () => {});
+      .eq('id', req.hostUser.id).then(() => {}, () => {});
 
     const sessions = (await Promise.all((data || []).map(withFigures))).map(s => ({
       id: s.id, channel: s.channel, domain: s.domain, note: s.note,
@@ -70,7 +70,7 @@ router.get('/me', requireHost, async (req, res, next) => {
       signups: s.signups, depositCount: s.depositCount, depositsMinor: s.depositsMinor,
       trades: s.trades, stakeVolumeMinor: s.stakeVolumeMinor, earningsMinor: s.marginMinor
     }));
-    res.json({ ok: true, host: { name: req.host.name, username: req.host.username }, sessions });
+    res.json({ ok: true, host: { name: req.hostUser.name, username: req.hostUser.username }, sessions });
   } catch (err) { next(err); }
 });
 
