@@ -298,28 +298,51 @@ router.get('/payments', async (req, res, next) => {
     const limit = Math.min(200, Number(req.query.limit) || 120);
     const offset = Math.max(0, Number(req.query.offset) || 0);
 
-    let q = admin
-      .from('payments')
-      .select('*', { count: 'exact' })
-      .eq('direction', 'deposit')
-      .order('created_at', { ascending: false })
-      .range(offset, offset + limit - 1);
+    /* A period, from the console's Today / This week / This month /
+       Custom buttons. The browser works out the edges in its own clock,
+       so "today" means the operator's day, and sends them as instants. */
+    const when = v => {
+      const t = v ? Date.parse(String(v)) : NaN;
+      return Number.isFinite(t) ? new Date(t).toISOString() : null;
+    };
+    const from = when(req.query.from);
+    const to = when(req.query.to);
 
-    if (req.query.status && req.query.status !== 'all') q = q.eq('status', req.query.status);
-    if (req.query.provider && req.query.provider !== 'all') q = q.eq('provider', req.query.provider);
-    /* One site's deposits. The primary site also owns the rows made
-       before deposits recorded a site at all. */
-    if (req.query.site && req.query.site !== 'all') {
-      q = req.query.site === PRIMARY_HOST
-        ? q.or(`domain_host.is.null,domain_host.eq.${PRIMARY_HOST}`)
-        : q.eq('domain_host', String(req.query.site).replace(/[^a-z0-9.-]/gi, ''));
-    }
+    /* The same filters go on the page of rows and on the totals. */
+    const filtered = q => {
+      q = q.eq('direction', 'deposit');
+      if (req.query.status && req.query.status !== 'all') q = q.eq('status', req.query.status);
+      if (req.query.provider && req.query.provider !== 'all') q = q.eq('provider', req.query.provider);
+      /* One site's deposits. The primary site also owns the rows made
+         before deposits recorded a site at all. */
+      if (req.query.site && req.query.site !== 'all') {
+        q = req.query.site === PRIMARY_HOST
+          ? q.or(`domain_host.is.null,domain_host.eq.${PRIMARY_HOST}`)
+          : q.eq('domain_host', String(req.query.site).replace(/[^a-z0-9.-]/gi, ''));
+      }
+      if (from) q = q.gte('created_at', from);
+      if (to) q = q.lt('created_at', to);
+      const term = (req.query.q || '').trim();
+      if (term) q = q.ilike('reference', `%${term.replace(/[%,()]/g, '')}%`);
+      return q;
+    };
 
-    const term = (req.query.q || '').trim();
-    if (term) q = q.ilike('reference', `%${term.replace(/[%,()]/g, '')}%`);
-
-    const { data, error, count } = await q;
+    const { data, error, count } = await filtered(
+      admin.from('payments').select('*', { count: 'exact' })
+    ).order('created_at', { ascending: false }).range(offset, offset + limit - 1);
     if (error) throw new HttpError(500, 'payments_failed', error.message);
+
+    /* Totals for the whole period, not just the rows on this page:
+       "collected this month" has to count every deposit in the month. */
+    let sumMinor = 0, sumCount = 0;
+    for (let at = 0; at < 100000; at += 1000) {
+      const { data: chunk, error: e2 } = await filtered(
+        admin.from('payments').select('amount_minor')
+      ).eq('status', 'success').order('created_at', { ascending: false }).range(at, at + 999);
+      if (e2) throw new HttpError(500, 'payments_failed', e2.message);
+      for (const r of chunk || []) { sumMinor += Number(r.amount_minor) || 0; sumCount += 1; }
+      if (!chunk || chunk.length < 1000) break;
+    }
 
     const ids = [...new Set((data || []).map(p => p.user_id))];
     const people = {};
@@ -332,6 +355,7 @@ router.get('/payments', async (req, res, next) => {
     res.json({
       ok: true,
       total: count ?? (data || []).length,
+      summary: { collectedMinor: sumMinor, count: sumCount },
       payments: (data || []).map(p => publicPayment(p, people[p.user_id]))
     });
   } catch (err) { next(err); }
