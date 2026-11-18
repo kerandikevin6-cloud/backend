@@ -18,7 +18,7 @@ import { events } from '../lib/events.js';
 import { newReference } from '../lib/reference.js';
 import { env, corsOrigins, payheroAuthSource, smsSource } from '../config/env.js';
 import { callbackUrl as payheroCallbackUrl } from '../services/payhero.js';
-import { PRIMARY_HOST } from '../lib/site.js';
+import { PRIMARY_HOST, HIDDEN_HOSTS, isHiddenHost } from '../lib/site.js';
 import { refreshDomains } from '../lib/origins.js';
 import { withFigures } from '../lib/sessionFigures.js';
 import { hashPassword } from '../lib/hosts.js';
@@ -140,11 +140,15 @@ router.get('/users/:id', async (req, res, next) => {
     const balances = {};
     for (const a of accounts || []) balances[a.kind] = Number(a.balance_minor);
 
+    /* An account opened on a hidden site (sql/025) keeps everything on
+       this page but its money history. */
+    const hidden = isHiddenHost(profile.domain_host);
+
     res.json({
       ok: true,
       user: publicUser(profile, balances),
-      payments: (payments || []).map(publicPayment),
-      withdrawals: (withdrawals || []).map(publicWithdrawal)
+      payments: hidden ? [] : (payments || []).map(publicPayment),
+      withdrawals: hidden ? [] : (withdrawals || []).map(publicWithdrawal)
     });
   } catch (err) { next(err); }
 });
@@ -231,7 +235,7 @@ router.post('/users/:id/credit',
   async (req, res, next) => {
     try {
       const { data: profile } = await admin
-        .from('profiles').select('id,role,display_name,email').eq('id', req.params.id).maybeSingle();
+        .from('profiles').select('id,role,display_name,email,domain_host').eq('id', req.params.id).maybeSingle();
       if (!profile) throw notFound('No such user');
       if (profile.role !== 'customer') throw badRequest('Only customer accounts are credited.');
 
@@ -242,6 +246,9 @@ router.post('/users/:id/credit',
           user_id: profile.id,
           direction: 'deposit',
           provider: 'manual',
+          /* credited to the account's own site, so a hidden site's
+             credits stay off the Deposits page with its other money */
+          domain_host: profile.domain_host || null,
           reference: newReference('ADM'),
           provider_ref: providerRef,
           amount_minor: req.body.amountMinor,
@@ -318,9 +325,14 @@ router.get('/payments', async (req, res, next) => {
       /* One site's deposits. The primary site also owns the rows made
          before deposits recorded a site at all. */
       if (req.query.site && req.query.site !== 'all') {
-        q = req.query.site === PRIMARY_HOST
+        const site = String(req.query.site).replace(/[^a-z0-9.-]/gi, '').toLowerCase();
+        q = site === PRIMARY_HOST
           ? q.or(`domain_host.is.null,domain_host.eq.${PRIMARY_HOST}`)
-          : q.eq('domain_host', String(req.query.site).replace(/[^a-z0-9.-]/gi, ''));
+          /* a hidden site's deposits are not listed, even when asked for */
+          : q.eq('domain_host', isHiddenHost(site) ? '-' : site);
+      } else if (HIDDEN_HOSTS.length) {
+        /* All sites: every one but the hidden ones (sql/025). */
+        q = q.or(`domain_host.is.null,domain_host.not.in.(${HIDDEN_HOSTS.join(',')})`);
       }
       if (from) q = q.gte('created_at', from);
       if (to) q = q.lt('created_at', to);

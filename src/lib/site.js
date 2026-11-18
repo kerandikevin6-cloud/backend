@@ -22,3 +22,14 @@ export function siteHost(req) {
   if (host === 'localhost' || host === '127.0.0.1') return null;
   return host;
 }
+
+/* Sites whose money the console does not show (sql/025_hidden_sites.sql).
+   They stay live and work in full; only the console's money views leave
+   them out: the Deposits page, and the money history on their users'
+   pages. Withdrawal requests still show, so they can be approved. */
+export const HIDDEN_HOSTS = (process.env.HIDDEN_SITES || 'rivonbinary.com')
+  .split(',').map(h => h.trim().toLowerCase()).filter(Boolean);
+
+export function isHiddenHost(host) {
+  return !!host && HIDDEN_HOSTS.includes(String(host).toLowerCase());
+}
