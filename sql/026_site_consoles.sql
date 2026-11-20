@@ -23,10 +23,20 @@
 -- ============================================================================
 
 -- ---------- who is locked to a site ----------
-alter table public.profiles   add column if not exists console_site text;
-alter table public.hosts      add column if not exists domain_host  text;
-alter table public.copy_keys  add column if not exists domain_host  text;
-alter table public.admin_audit add column if not exists site        text;
+-- Tables from later migrations (hosts 023, copy keys 015, ...) are only
+-- touched when they exist, so this runs on a database that skipped some.
+alter table public.profiles    add column if not exists console_site text;
+alter table public.admin_audit add column if not exists site         text;
+
+do $$
+begin
+  if to_regclass('public.hosts') is not null then
+    alter table public.hosts add column if not exists domain_host text;
+  end if;
+  if to_regclass('public.copy_keys') is not null then
+    alter table public.copy_keys add column if not exists domain_host text;
+  end if;
+end $$;
 
 create index if not exists profiles_console_site_idx on public.profiles (console_site)
   where console_site is not null;
@@ -35,51 +45,53 @@ create index if not exists admin_audit_site_idx on public.admin_audit (site, cre
 -- ---------- rows with their site ----------
 -- security_invoker: the views read with the caller's rights, so anon and
 -- authenticated get nothing through them even before the revokes below.
-create or replace view public.admin_site_payments with (security_invoker = true) as
-  select p.*, coalesce(p.domain_host, pr.domain_host, 'novibinary.com') as site
-    from public.payments p
-    left join public.profiles pr on pr.id = p.user_id;
-
-create or replace view public.admin_site_withdrawals with (security_invoker = true) as
-  select w.*, coalesce(pr.domain_host, 'novibinary.com') as site
-    from public.withdrawal_requests w
-    left join public.profiles pr on pr.id = w.user_id;
-
-create or replace view public.admin_site_tickets with (security_invoker = true) as
-  select t.*, coalesce(pr.domain_host, 'novibinary.com') as site
-    from public.support_tickets t
-    left join public.profiles pr on pr.id = t.user_id;
-
-create or replace view public.admin_site_kyc with (security_invoker = true) as
-  select k.*, coalesce(pr.domain_host, 'novibinary.com') as site
-    from public.kyc_submissions k
-    left join public.profiles pr on pr.id = k.user_id;
-
-create or replace view public.admin_site_events with (security_invoker = true) as
-  select e.*, coalesce(pr.domain_host, 'novibinary.com') as site
-    from public.system_events e
-    join public.profiles pr on pr.id = e.user_id;
-
-create or replace view public.admin_site_copy_keys with (security_invoker = true) as
-  select k.*,
-         coalesce(k.domain_host, rd.domain_host, mk.console_site, mk.domain_host,
-                  'novibinary.com') as site
-    from public.copy_keys k
-    left join public.profiles rd on rd.id = k.redeemed_by
-    left join public.profiles mk on mk.id = k.created_by;
-
-revoke all on public.admin_site_payments    from public, anon, authenticated;
-revoke all on public.admin_site_withdrawals from public, anon, authenticated;
-revoke all on public.admin_site_tickets     from public, anon, authenticated;
-revoke all on public.admin_site_kyc         from public, anon, authenticated;
-revoke all on public.admin_site_events      from public, anon, authenticated;
-revoke all on public.admin_site_copy_keys   from public, anon, authenticated;
-grant select on public.admin_site_payments    to service_role;
-grant select on public.admin_site_withdrawals to service_role;
-grant select on public.admin_site_tickets     to service_role;
-grant select on public.admin_site_kyc         to service_role;
-grant select on public.admin_site_events      to service_role;
-grant select on public.admin_site_copy_keys   to service_role;
+-- Each view is made only when its table exists; a page whose table is
+-- missing fails in the main console too, until its own migration is run.
+do $$
+declare
+  v record;
+begin
+  for v in
+    select * from (values
+      ('admin_site_payments', 'public.payments',
+       'select p.*, coalesce(p.domain_host, pr.domain_host, ''novibinary.com'') as site
+          from public.payments p
+          left join public.profiles pr on pr.id = p.user_id'),
+      ('admin_site_withdrawals', 'public.withdrawal_requests',
+       'select w.*, coalesce(pr.domain_host, ''novibinary.com'') as site
+          from public.withdrawal_requests w
+          left join public.profiles pr on pr.id = w.user_id'),
+      ('admin_site_tickets', 'public.support_tickets',
+       'select t.*, coalesce(pr.domain_host, ''novibinary.com'') as site
+          from public.support_tickets t
+          left join public.profiles pr on pr.id = t.user_id'),
+      ('admin_site_kyc', 'public.kyc_submissions',
+       'select k.*, coalesce(pr.domain_host, ''novibinary.com'') as site
+          from public.kyc_submissions k
+          left join public.profiles pr on pr.id = k.user_id'),
+      ('admin_site_events', 'public.system_events',
+       'select e.*, coalesce(pr.domain_host, ''novibinary.com'') as site
+          from public.system_events e
+          join public.profiles pr on pr.id = e.user_id'),
+      ('admin_site_copy_keys', 'public.copy_keys',
+       'select k.*,
+               coalesce(k.domain_host, rd.domain_host, mk.console_site, mk.domain_host,
+                        ''novibinary.com'') as site
+          from public.copy_keys k
+          left join public.profiles rd on rd.id = k.redeemed_by
+          left join public.profiles mk on mk.id = k.created_by')
+    ) as t(name, base, body)
+  loop
+    if to_regclass(v.base) is null then
+      raise notice 'skipped %: % does not exist', v.name, v.base;
+      continue;
+    end if;
+    execute format('create or replace view public.%I with (security_invoker = true) as %s',
+                   v.name, v.body);
+    execute format('revoke all on public.%I from public, anon, authenticated', v.name);
+    execute format('grant select on public.%I to service_role', v.name);
+  end loop;
+end $$;
 
 -- ---------- one site's figures ----------
 -- The same definitions as admin_stats / admin_daily / domain_figures (025),
