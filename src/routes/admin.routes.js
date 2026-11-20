@@ -8,7 +8,7 @@ import { z } from 'zod';
 import { admin } from '../lib/supabase.js';
 import { requireStaff, requireRole, audit, STAFF_ROLES } from '../middleware/adminAuth.js';
 import { validate } from '../middleware/validate.js';
-import { notFound, badRequest, conflict, HttpError } from '../lib/errors.js';
+import { notFound, badRequest, conflict, forbidden, HttpError } from '../lib/errors.js';
 import { reconcile } from './deposits.routes.js';
 import { checkAll } from '../services/health.js';
 import * as demo from '../services/mpesaDemo.js';
@@ -26,6 +26,46 @@ import { hashPassword } from '../lib/hosts.js';
 const router = Router();
 router.use(requireStaff);
 
+/* ---------------- one site's console ----------------
+   req.scope is set by requireStaff (lib/site.js consoleScope): null in the
+   main console, a host such as rivonbinary.com in that site's own console
+   (rivonbinary.com/superadmin) or for a staff account locked to it.
+
+   A scoped console reads every list through the admin_site_* views
+   (sql/026), which carry each row's site, and every single-row action
+   checks the row's site first. Anything outside the site answers 404,
+   the same as a row that does not exist. The main console is unchanged. */
+const siteOf = p => (p && p.domain_host) || PRIMARY_HOST;
+
+function siteEq(q, col, host) {
+  return host === PRIMARY_HOST
+    ? q.or(`${col}.is.null,${col}.eq.${PRIMARY_HOST}`)
+    : q.eq(col, host);
+}
+
+async function assertRow(req, view, id, what) {
+  if (!req.scope) return;
+  const { data } = await admin.from(view).select('site').eq('id', id).maybeSingle();
+  if (!data || data.site !== req.scope) throw notFound('No such ' + what);
+}
+
+/* Settings that belong to every site at once: only the main console. */
+function mainConsoleOnly(req, _res, next) {
+  if (req.scope) return next(forbidden('That is managed from the main console.'));
+  next();
+}
+
+/* Every /users/:id route, and the wallet routes under it. */
+router.use('/users/:id', async (req, _res, next) => {
+  try {
+    if (!req.scope) return next();
+    const { data } = await admin
+      .from('profiles').select('domain_host').eq('id', req.params.id).maybeSingle();
+    if (!data || siteOf(data) !== req.scope) throw notFound('No such user');
+    next();
+  } catch (err) { next(err); }
+});
+
 /* ---------------- who am I ---------------- */
 router.get('/me', (req, res) => {
   res.json({
@@ -35,14 +75,18 @@ router.get('/me', (req, res) => {
       email: req.operator.email,
       name: req.operator.display_name || 'Operator',
       role: req.operator.role
-    }
+    },
+    /* the one site this console shows, or null for every site */
+    site: req.scope || null
   });
 });
 
 /* ---------------- dashboard ---------------- */
 router.get('/stats', async (req, res, next) => {
   try {
-    const { data, error } = await admin.rpc('admin_stats');
+    const { data, error } = req.scope
+      ? await admin.rpc('admin_stats_site', { p_host: req.scope })
+      : await admin.rpc('admin_stats');
     if (error) throw new HttpError(500, 'stats_failed', error.message);
     res.json({ ok: true, stats: data });
   } catch (err) { next(err); }
@@ -51,7 +95,9 @@ router.get('/stats', async (req, res, next) => {
 router.get('/daily', async (req, res, next) => {
   try {
     const days = Math.min(90, Math.max(7, Number(req.query.days) || 14));
-    const { data, error } = await admin.rpc('admin_daily', { p_days: days });
+    const { data, error } = req.scope
+      ? await admin.rpc('admin_daily_site', { p_host: req.scope, p_days: days })
+      : await admin.rpc('admin_daily', { p_days: days });
     if (error) throw new HttpError(500, 'daily_failed', error.message);
     res.json({
       ok: true,
@@ -88,6 +134,7 @@ router.get('/users', async (req, res, next) => {
       .order('created_at', { ascending: false })
       .range(offset, offset + limit - 1);
 
+    if (req.scope) q = siteEq(q, 'domain_host', req.scope);
     if (req.query.kyc && req.query.kyc !== 'all') q = q.eq('kyc_status', req.query.kyc);
     if (req.query.status && req.query.status !== 'all') q = q.eq('status', req.query.status);
 
@@ -142,7 +189,7 @@ router.get('/users/:id', async (req, res, next) => {
 
     /* An account opened on a hidden site (sql/025) keeps everything on
        this page but its money history. */
-    const hidden = isHiddenHost(profile.domain_host);
+    const hidden = !req.scope && isHiddenHost(profile.domain_host);
 
     res.json({
       ok: true,
@@ -322,9 +369,12 @@ router.get('/payments', async (req, res, next) => {
       q = q.eq('direction', 'deposit');
       if (req.query.status && req.query.status !== 'all') q = q.eq('status', req.query.status);
       if (req.query.provider && req.query.provider !== 'all') q = q.eq('provider', req.query.provider);
+      if (req.scope) {
+        /* one site's console: its deposits and nothing else */
+        q = q.eq('site', req.scope);
       /* One site's deposits. The primary site also owns the rows made
          before deposits recorded a site at all. */
-      if (req.query.site && req.query.site !== 'all') {
+      } else if (req.query.site && req.query.site !== 'all') {
         const site = String(req.query.site).replace(/[^a-z0-9.-]/gi, '').toLowerCase();
         q = site === PRIMARY_HOST
           ? q.or(`domain_host.is.null,domain_host.eq.${PRIMARY_HOST}`)
@@ -342,7 +392,7 @@ router.get('/payments', async (req, res, next) => {
     };
 
     const { data, error, count } = await filtered(
-      admin.from('payments').select('*', { count: 'exact' })
+      admin.from(req.scope ? 'admin_site_payments' : 'payments').select('*', { count: 'exact' })
     ).order('created_at', { ascending: false }).range(offset, offset + limit - 1);
     if (error) throw new HttpError(500, 'payments_failed', error.message);
 
@@ -352,7 +402,7 @@ router.get('/payments', async (req, res, next) => {
     const payers = new Set();
     for (let at = 0; at < 100000; at += 1000) {
       const { data: chunk, error: e2 } = await filtered(
-        admin.from('payments').select('amount_minor,user_id')
+        admin.from(req.scope ? 'admin_site_payments' : 'payments').select('amount_minor,user_id')
       ).eq('status', 'success').order('created_at', { ascending: false }).range(at, at + 999);
       if (e2) throw new HttpError(500, 'payments_failed', e2.message);
       for (const r of chunk || []) {
@@ -387,6 +437,7 @@ router.post('/payments/:id/recheck',
   requireRole('super_admin', 'admin', 'manager', 'finance', 'operator'),
   async (req, res, next) => {
     try {
+      await assertRow(req, 'admin_site_payments', req.params.id, 'payment');
       const { data: payment } = await admin
         .from('payments').select('*').eq('id', req.params.id).maybeSingle();
       if (!payment) throw notFound('No such payment');
@@ -417,6 +468,7 @@ router.post('/payments/:id/credit',
   validate(z.object({ note: z.string().max(300).optional() })),
   async (req, res, next) => {
     try {
+      await assertRow(req, 'admin_site_payments', req.params.id, 'payment');
       const { data: payment } = await admin
         .from('payments').select('*').eq('id', req.params.id).maybeSingle();
       if (!payment) throw notFound('No such payment');
@@ -458,12 +510,13 @@ router.post('/payments/:id/credit',
 router.get('/withdrawals', async (req, res, next) => {
   try {
     let q = admin
-      .from('withdrawal_requests')
+      .from(req.scope ? 'admin_site_withdrawals' : 'withdrawal_requests')
       .select('*', { count: 'exact' })
       .order('created_at', { ascending: false })
       .limit(Math.min(200, Number(req.query.limit) || 120));
 
     if (req.query.status && req.query.status !== 'all') q = q.eq('status', req.query.status);
+    if (req.scope) q = q.eq('site', req.scope);
 
     const { data, error, count } = await q;
     if (error) throw new HttpError(500, 'withdrawals_failed', error.message);
@@ -499,6 +552,7 @@ router.post('/withdrawals/:id/approve',
   validate(z.object({ note: z.string().max(300).optional() })),
   async (req, res, next) => {
     try {
+      await assertRow(req, 'admin_site_withdrawals', req.params.id, 'request');
       const { data, error } = await admin.rpc('settle_withdrawal', {
         p_request_id: req.params.id,
         p_actor: req.operator.id,
@@ -521,6 +575,7 @@ router.post('/withdrawals/:id/reject',
   validate(z.object({ note: z.string().max(300).optional() })),
   async (req, res, next) => {
     try {
+      await assertRow(req, 'admin_site_withdrawals', req.params.id, 'request');
       /* release_withdrawal puts the held funds back on the balance. */
       const { data, error } = await admin.rpc('release_withdrawal', {
         p_request_id: req.params.id,
@@ -542,7 +597,9 @@ router.post('/withdrawals/:id/reject',
 /* ---------------- domains ---------------- */
 router.get('/domains', async (req, res, next) => {
   try {
-    const { data, error } = await admin.rpc('domain_figures');
+    const { data, error } = req.scope
+      ? await admin.rpc('domain_figures_site', { p_host: req.scope })
+      : await admin.rpc('domain_figures');
     if (error) throw new HttpError(500, 'domains_failed', error.message);
     res.json({
       ok: true,
@@ -560,6 +617,7 @@ router.get('/domains', async (req, res, next) => {
 });
 
 router.post('/domains',
+  mainConsoleOnly,
   requireRole('admin', 'super_admin', 'manager'),
   validate(z.object({
     host: z.string().trim().toLowerCase()
@@ -586,6 +644,7 @@ router.post('/domains',
   });
 
 router.patch('/domains/:host',
+  mainConsoleOnly,
   requireRole('admin', 'super_admin', 'manager'),
   validate(z.object({
     status: z.enum(['live', 'paused']).optional(),
@@ -617,10 +676,12 @@ router.patch('/domains/:host',
 /* ---------------- marketing sessions ---------------- */
 router.get('/sessions', async (req, res, next) => {
   try {
-    const { data, error } = await admin
+    let q = admin
       .from('sessions').select('*')
       .order('started_at', { ascending: false })
       .limit(Math.min(100, Number(req.query.limit) || 40));
+    if (req.scope) q = siteEq(q, 'domain_host', req.scope);
+    const { data, error } = await q;
     if (error) throw new HttpError(500, 'sessions_failed', error.message);
     res.json({ ok: true, sessions: await Promise.all((data || []).map(withFigures)) });
   } catch (err) { next(err); }
@@ -642,16 +703,17 @@ router.post('/sessions',
          their own page. The name on the session is the host's name. */
       let host = null;
       if (req.body.hostId) {
-        const { data: h } = await admin.from('hosts').select('id,name,status')
+        const { data: h } = await admin.from('hosts').select('id,name,status,domain_host')
           .eq('id', req.body.hostId).maybeSingle();
-        if (!h) throw notFound('No such host');
+        if (!h || (req.scope && h.domain_host !== req.scope)) throw notFound('No such host');
         host = h;
       }
       const { data, error } = await admin.from('sessions').insert({
         channel: req.body.channel,
         handler: host ? host.name : req.body.handler,
         host_id: host ? host.id : null,
-        domain_host: req.body.domain || null,
+        /* a site's console runs sessions for that site only */
+        domain_host: req.scope || req.body.domain || null,
         note: req.body.note || null,
         ad_spend_minor: req.body.adSpendMinor,
         started_by: req.operator.id
@@ -675,11 +737,12 @@ router.post('/sessions/:id/end',
   requireRole('admin', 'super_admin', 'manager', 'marketing', 'session_handler'),
   async (req, res, next) => {
     try {
-      const { data, error } = await admin
+      let q = admin
         .from('sessions')
         .update({ status: 'ended', ended_at: new Date().toISOString(), ended_by: req.operator.id })
-        .eq('id', req.params.id).eq('status', 'live')
-        .select().maybeSingle();
+        .eq('id', req.params.id).eq('status', 'live');
+      if (req.scope) q = siteEq(q, 'domain_host', req.scope);
+      const { data, error } = await q.select().maybeSingle();
       if (error) throw new HttpError(400, 'session_failed', error.message);
       if (!data) throw notFound('No session is running');
 
@@ -700,9 +763,11 @@ const publicHost = h => ({
 
 router.get('/hosts', async (req, res, next) => {
   try {
-    const { data, error } = await admin.from('hosts')
+    let q = admin.from('hosts')
       .select('id,name,username,status,created_at,last_seen_at')
       .order('created_at', { ascending: true });
+    q = req.scope ? q.eq('domain_host', req.scope) : q.is('domain_host', null);
+    const { data, error } = await q;
     if (error) throw new HttpError(500, 'hosts_failed', error.message);
     res.json({ ok: true, hosts: (data || []).map(publicHost) });
   } catch (err) { next(err); }
@@ -720,7 +785,8 @@ router.post('/hosts', requireRole(...HOST_ROLES),
       const { data, error } = await admin.from('hosts').insert({
         name: req.body.name,
         username: req.body.username.toLowerCase(),
-        password_hash: hashPassword(req.body.password)
+        password_hash: hashPassword(req.body.password),
+        domain_host: req.scope || null
       }).select().single();
       if (error) {
         if (/hosts_username_key|duplicate|unique/i.test(error.message)) {
@@ -730,8 +796,10 @@ router.post('/hosts', requireRole(...HOST_ROLES),
       }
       /* Sessions already run under this name, before hosts had accounts,
          become theirs so their page is not empty on day one. */
-      await admin.from('sessions').update({ host_id: data.id })
+      let claim = admin.from('sessions').update({ host_id: data.id })
         .is('host_id', null).ilike('handler', data.name.replace(/[%_\\]/g, ''));
+      if (req.scope) claim = siteEq(claim, 'domain_host', req.scope);
+      await claim;
 
       await audit(req, 'host.create', data.id, { username: data.username });
       res.status(201).json({ ok: true, host: publicHost(data) });
@@ -752,8 +820,9 @@ router.patch('/hosts/:id', requireRole(...HOST_ROLES),
       if (req.body.password) patch.password_hash = hashPassword(req.body.password);
       if (!Object.keys(patch).length) throw badRequest('Nothing to change');
 
-      const { data, error } = await admin.from('hosts').update(patch)
-        .eq('id', req.params.id).select().maybeSingle();
+      let q = admin.from('hosts').update(patch).eq('id', req.params.id);
+      q = req.scope ? q.eq('domain_host', req.scope) : q.is('domain_host', null);
+      const { data, error } = await q.select().maybeSingle();
       if (error) throw new HttpError(400, 'host_failed', error.message);
       if (!data) throw notFound('No such host');
 
@@ -770,11 +839,15 @@ router.patch('/hosts/:id', requireRole(...HOST_ROLES),
 
 router.get('/staff', requireRole('admin', 'super_admin', 'manager'), async (req, res, next) => {
   try {
-    const { data, error } = await admin
+    let q = admin
       .from('profiles')
       .select('id,email,display_name,role,status,created_at,last_seen_at')
       .neq('role', 'customer')
       .order('created_at', { ascending: true });
+    /* A site's console lists the staff locked to that site; the main
+       console lists everyone else. */
+    q = req.scope ? q.eq('console_site', req.scope) : q.is('console_site', null);
+    const { data, error } = await q;
     if (error) throw new HttpError(500, 'staff_failed', error.message);
     res.json({
       ok: true,
@@ -816,7 +889,8 @@ router.post('/staff',
 
       const { data: profile, error: pErr } = await admin
         .from('profiles')
-        .update({ role: req.body.role, display_name: req.body.name })
+        /* invited from a site's console: locked to that site */
+        .update({ role: req.body.role, display_name: req.body.name, console_site: req.scope || null })
         .eq('id', userId).select().maybeSingle();
       if (pErr) throw new HttpError(400, 'invite_failed', pErr.message);
 
@@ -846,17 +920,22 @@ router.patch('/staff/:id',
 
       /* Losing the last super admin locks this page for everybody, and
          there is no route back from inside the console. */
+      const { data: target } = await admin
+        .from('profiles').select('role,console_site').eq('id', req.params.id).maybeSingle();
+      /* each console manages its own staff only */
+      if (!target || (target.console_site || null) !== (req.scope || null)) {
+        throw notFound('No such admin');
+      }
+
       const losingSuper = req.body.role && req.body.role !== 'super_admin';
       const suspending = req.body.status === 'suspended';
-      if (losingSuper || suspending) {
-        const { data: target } = await admin
-          .from('profiles').select('role').eq('id', req.params.id).maybeSingle();
-        if (target?.role === 'super_admin') {
-          const { count } = await admin
-            .from('profiles').select('id', { count: 'exact', head: true })
-            .eq('role', 'super_admin').eq('status', 'active');
-          if ((count || 0) < 2) throw conflict('There has to be at least one super admin.');
-        }
+      if ((losingSuper || suspending) && target.role === 'super_admin') {
+        let q = admin
+          .from('profiles').select('id', { count: 'exact', head: true })
+          .eq('role', 'super_admin').eq('status', 'active');
+        q = req.scope ? q.eq('console_site', req.scope) : q;
+        const { count } = await q;
+        if ((count || 0) < 2) throw conflict('There has to be at least one super admin.');
       }
 
       const { data, error } = await admin
@@ -879,10 +958,12 @@ router.patch('/staff/:id',
 /* ---------------- audit trail ---------------- */
 router.get('/audit', requireRole('super_admin', 'admin'), async (req, res, next) => {
   try {
-    const { data } = await admin
+    let q = admin
       .from('admin_audit').select('*')
       .order('created_at', { ascending: false })
       .limit(Math.min(200, Number(req.query.limit) || 100));
+    if (req.scope) q = q.eq('site', req.scope);
+    const { data } = await q;
     res.json({ ok: true, entries: data || [] });
   } catch (err) { next(err); }
 });
@@ -898,10 +979,12 @@ router.get('/tickets',
       const status = ['open', 'answered', 'closed'].includes(req.query.status)
         ? req.query.status : 'open';
 
-      const { data, error } = await admin
-        .from('support_tickets')
+      let tq = admin
+        .from(req.scope ? 'admin_site_tickets' : 'support_tickets')
         .select('*')
-        .eq('status', status)
+        .eq('status', status);
+      if (req.scope) tq = tq.eq('site', req.scope);
+      const { data, error } = await tq
         .order('created_at', { ascending: status === 'open' })
         .limit(100);
       if (error) throw new HttpError(500, 'tickets_failed', error.message);
@@ -949,6 +1032,7 @@ router.post('/tickets/:id',
   })),
   async (req, res, next) => {
     try {
+      await assertRow(req, 'admin_site_tickets', req.params.id, 'ticket');
       const { data, error } = await admin.rpc('reply_ticket', {
         p_ticket: req.params.id,
         p_actor: req.operator.id,
@@ -990,10 +1074,12 @@ router.get('/verifications',
       const status = ['pending', 'approved', 'rejected'].includes(req.query.status)
         ? req.query.status : 'pending';
 
-      const { data, error } = await admin
-        .from('kyc_submissions')
+      let kq = admin
+        .from(req.scope ? 'admin_site_kyc' : 'kyc_submissions')
         .select('*')
-        .eq('status', status)
+        .eq('status', status);
+      if (req.scope) kq = kq.eq('site', req.scope);
+      const { data, error } = await kq
         /* Oldest first while pending: somebody has been waiting, and a
            newest-first queue is how they keep waiting. */
         .order('created_at', { ascending: status === 'pending' })
@@ -1068,6 +1154,7 @@ router.post('/verifications/:id',
   })),
   async (req, res, next) => {
     try {
+      await assertRow(req, 'admin_site_kyc', req.params.id, 'submission');
       const approve = req.body.action === 'approve';
 
       /* A rejection without a reason is a customer who will send the
@@ -1272,10 +1359,12 @@ const KEY_ROLES = ['super_admin', 'admin', 'manager', 'operator'];
 
 router.get('/copy-keys', requireRole(...KEY_ROLES), async (req, res, next) => {
   try {
-    const { data, error } = await admin
-      .from('copy_keys').select('*')
+    let q = admin
+      .from(req.scope ? 'admin_site_copy_keys' : 'copy_keys').select('*')
       .order('created_at', { ascending: false })
       .limit(Math.min(500, Number(req.query.limit) || 200));
+    if (req.scope) q = q.eq('site', req.scope);
+    const { data, error } = await q;
     if (error) throw new HttpError(500, 'keys_failed', error.message);
 
     const rows = data || [];
@@ -1295,7 +1384,9 @@ router.post('/copy-keys',
       const rows = Array.from({ length: req.body.count }, () => ({
         key: newCopyKey(),
         note: req.body.note || null,
-        created_by: req.operator.id
+        created_by: req.operator.id,
+        /* made in a site's console: that site's key */
+        ...(req.scope ? { domain_host: req.scope } : {})
       }));
       const { data, error } = await admin.from('copy_keys').insert(rows).select();
       if (error) throw new HttpError(500, 'keys_failed', error.message);
@@ -1314,6 +1405,7 @@ router.post('/copy-keys/:id/revoke',
   requireRole(...KEY_ROLES),
   async (req, res, next) => {
     try {
+      await assertRow(req, 'admin_site_copy_keys', req.params.id, 'key');
       const { data, error } = await admin
         .from('copy_keys')
         .update({ revoked_at: new Date().toISOString() })
@@ -1337,6 +1429,10 @@ router.post('/copy-keys/:id/revoke',
 router.get('/health', async (req, res, next) => {
   try {
     const services = await checkAll();
+    if (req.scope) {
+      return res.json({ ok: true, services, app: { env: env.NODE_ENV },
+        checkedAt: new Date().toISOString() });
+    }
     res.json({
       ok: true,
       services,
@@ -1448,9 +1544,10 @@ router.post('/system/test-sms',
 router.get('/logs', async (req, res, next) => {
   try {
     const limit = Math.min(200, Number(req.query.limit) || 100);
-    let q = admin.from('system_events').select('*')
+    let q = admin.from(req.scope ? 'admin_site_events' : 'system_events').select('*')
       .order('created_at', { ascending: false })
       .limit(limit);
+    if (req.scope) q = q.eq('site', req.scope);
 
     if (req.query.level && req.query.level !== 'all') q = q.eq('level', req.query.level);
     if (req.query.source && req.query.source !== 'all') q = q.eq('source', req.query.source);

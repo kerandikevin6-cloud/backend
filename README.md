@@ -207,6 +207,30 @@ Everyone else is created from the console: Admins → New, which only a
 demote or suspend the last active super admin — not a grant, just a
 refusal to let the console lock everybody out.
 
+## Site consoles (rivonbinary.com/superadmin)
+
+A hidden site (sql/025) gets its own console: the same pages as the main
+one, served from that site at `/superadmin`, on this same API. Run
+`sql/026_site_consoles.sql` **before** deploying the API that uses it.
+
+- A console request from a hidden site's origin sees that site only:
+  users, deposits, withdrawals, tickets, KYC, copy keys, sessions, hosts,
+  staff, audit and logs. The main console is unchanged and still leaves
+  the hidden site's money out.
+- Staff invited from a site's console are locked to it
+  (`profiles.console_site`): they see that site only, from any console,
+  and the main console does not list them.
+- Domains are added and taken offline from the main console only.
+
+To make the site's first super admin, sign in to the site's console with
+an existing super admin and use Admins → New, or in SQL:
+
+```sql
+update public.profiles
+   set role = 'super_admin', status = 'active', console_site = 'rivonbinary.com'
+ where lower(email) = lower('owner@example.com');
+```
+
 ## Connecting the front end
 
 `assets/js/api.js` already has the seam:

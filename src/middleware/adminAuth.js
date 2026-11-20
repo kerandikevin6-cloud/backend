@@ -5,6 +5,7 @@
    token issued before someone was demoted would still carry the old
    claim, and that is exactly the request you do not want to honour.
    ============================================================ */
+import { consoleScope } from '../lib/site.js';
 import { admin } from '../lib/supabase.js';
 import { unauthorized, forbidden } from '../lib/errors.js';
 import { userForToken } from './auth.js';
@@ -38,7 +39,7 @@ export async function requireStaff(req, _res, next) {
 
     const { data: profile } = await admin
       .from('profiles')
-      .select('id,email,display_name,role,status')
+      .select('*')
       .eq('id', data.user.id)
       .single();
 
@@ -52,7 +53,13 @@ export async function requireStaff(req, _res, next) {
     }
 
     req.user = data.user;
-    req.operator = profile;
+    req.operator = {
+      id: profile.id, email: profile.email, display_name: profile.display_name,
+      role: profile.role, status: profile.status,
+      console_site: profile.console_site || null
+    };
+    /* The one site this console may see, or null for all (lib/site.js). */
+    req.scope = consoleScope(req, req.operator);
     req.accessToken = token;
     next();
   } catch (err) {
@@ -80,7 +87,8 @@ export async function audit(req, action, subject, detail) {
       actor_email: req.operator?.email || null,
       action,
       subject: subject || null,
-      detail: detail || null
+      detail: detail || null,
+      site: req.scope || null
     });
   } catch (err) {
     req.log?.error({ err, action }, 'could not write audit row');

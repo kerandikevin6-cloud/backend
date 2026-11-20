@@ -33,3 +33,22 @@ export const HIDDEN_HOSTS = (process.env.HIDDEN_SITES || 'rivonbinary.com')
 export function isHiddenHost(host) {
   return !!host && HIDDEN_HOSTS.includes(String(host).toLowerCase());
 }
+
+/* Which site a console request may see (sql/026_site_consoles.sql).
+
+     null   the main console: every site, hidden ones' money left out
+     host   that site and nothing else
+
+   A staff account locked to a site (profiles.console_site) gets that site
+   wherever it signs in. Otherwise the console's own origin decides: a
+   console served from a hidden site, such as rivonbinary.com/superadmin,
+   is that site's console. The origin is set by the browser and cannot be
+   changed by a page's script, and a request made outside a browser can
+   claim any origin, but only a staff account can make one at all, and an
+   unlocked staff account can already see everything. */
+export function consoleScope(req, operator) {
+  const locked = operator?.console_site;
+  if (locked) return String(locked).toLowerCase();
+  const host = siteHost(req);
+  return isHiddenHost(host) ? host : null;
+}
