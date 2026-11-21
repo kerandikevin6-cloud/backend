@@ -139,7 +139,8 @@ router.post('/mpesa',
           phone,
           amountMinor: payment.amount_minor,
           reference: payment.reference,
-          name: profile?.display_name
+          name: profile?.display_name,
+          site: payment.domain_host || siteHost(req)
         });
 
         await admin.from('payments')

@@ -21,9 +21,13 @@
    ============================================================ */
 import { env, payheroToken, payheroCallbackSecret } from '../config/env.js';
 import { upstream } from '../lib/errors.js';
+import { payheroFor } from '../lib/siteKeys.js';
 
-async function call(path, options = {}) {
-  if (!payheroToken) {
+/* The account is chosen by the site the payment belongs to: most share
+   one, a site in lib/siteKeys.js may have its own. */
+async function call(path, options = {}, site = null) {
+  const { token } = payheroFor(site, payheroToken);
+  if (!token) {
     throw upstream('M-Pesa is not configured on this server');
   }
 
@@ -32,7 +36,7 @@ async function call(path, options = {}) {
     res = await fetch(`${env.PAYHERO_BASE_URL}${path}`, {
       ...options,
       headers: {
-        Authorization: `Basic ${payheroToken}`,
+        Authorization: `Basic ${token}`,
         'Content-Type': 'application/json',
         ...(options.headers || {})
       }
@@ -75,9 +79,9 @@ async function call(path, options = {}) {
  * @param {number} amountMinor  cents — converted to shillings here
  * @param {string} reference  our reference, echoed back on the callback
  */
-export async function stkPush({ phone, amountMinor, reference, name }) {
+export async function stkPush({ phone, amountMinor, reference, name, site }) {
   const amount = Math.round(amountMinor / 100);   // PayHero wants shillings
-  const channelId = Number(env.PAYHERO_CHANNEL_ID);
+  const channelId = Number(payheroFor(site, payheroToken).channelId);
 
   /* Without a channel there is no account for the money to land in.
      PayHero has been known to accept the request anyway and do nothing
@@ -98,7 +102,7 @@ export async function stkPush({ phone, amountMinor, reference, name }) {
       customer_name: name || undefined,
       callback_url: callbackUrl()
     })
-  });
+  }, site);
 
   /* Accepted means they gave us something to track it by. A response
      with no handle in it is not a queued push, whatever it says. */
@@ -123,8 +127,8 @@ export async function stkPush({ phone, amountMinor, reference, name }) {
  * money callbacks do get lost, and a deposit that silently never lands
  * is the worst failure this system can have.
  */
-export async function transactionStatus(reference) {
-  return call(`/transaction-status?reference=${encodeURIComponent(reference)}`);
+export async function transactionStatus(reference, site = null) {
+  return call(`/transaction-status?reference=${encodeURIComponent(reference)}`, {}, site);
 }
 
 /**
@@ -151,7 +155,7 @@ export async function findTransaction(payment) {
   for (const handle of handles) {
     let body;
     try {
-      body = await transactionStatus(handle);
+      body = await transactionStatus(handle, payment.domain_host);
     } catch (err) {
       lastError = err;
       continue;

@@ -12,7 +12,8 @@ import helmet from 'helmet';
 import pinoHttp from 'pino-http';
 import pino from 'pino';
 
-import { env, corsOrigins, payheroAuthSource, smsSource } from './config/env.js';
+import { env, corsOrigins, payheroAuthSource, smsSource, payheroToken } from './config/env.js';
+import { payheroOwners } from './lib/siteKeys.js';
 import { originPermitted, liveDomains } from './lib/origins.js';
 import { events } from './lib/events.js';
 import { callbackUrl as payheroCallbackUrl } from './services/payhero.js';
@@ -162,6 +163,7 @@ const server = app.listen(env.PORT, () => {
   }
   logger.info(`payhero auth       ${payheroAuthSource}`);
   logger.info(`payhero channel    ${env.PAYHERO_CHANNEL_ID || 'NOT SET — M-Pesa will refuse'}`);
+  for (const line of payheroOwners(payheroToken)) logger.info(`payhero site       ${line}`);
   /* The demo rail's confirmation texts. Unset is a valid state, so this
      is info rather than a warning — but it is printed either way, because
      the first sign of a missing key is otherwise a presentation where no
