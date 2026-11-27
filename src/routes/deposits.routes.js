@@ -31,16 +31,14 @@ import { siteHost } from '../lib/site.js';
 
 const router = Router();
 
-/* The rail collects shillings; the customer was quoted dollars. The
-   limits are checked in what actually arrives and stated in what they
-   typed, so the message answers the question they are holding. */
-const usdOf = minor => (Number(minor) / 100 / env.USD_RATE_KES).toFixed(2);
+/* The rail collects shillings, and the limits are stated in shillings. */
 
+const ksh = minor => 'KSh ' + Math.round(Number(minor) / 100).toLocaleString('en-US');
 const amountMinor = z.coerce.number().int()
   .refine(v => v >= env.MIN_DEPOSIT_MINOR,
-    `Minimum deposit is ${usdOf(env.MIN_DEPOSIT_MINOR)} USD`)
+    `Minimum deposit is ${ksh(env.MIN_DEPOSIT_MINOR)}`)
   .refine(v => v <= env.MAX_DEPOSIT_MINOR,
-    `Maximum deposit is ${usdOf(env.MAX_DEPOSIT_MINOR)} USD`);
+    `Maximum deposit is ${ksh(env.MAX_DEPOSIT_MINOR)}`);
 
 async function createPending({ userId, provider, amount_minor, currency, phone, prefix, site }) {
   const reference = newReference(prefix || (provider === 'payhero' ? 'MP' : 'CD'));
