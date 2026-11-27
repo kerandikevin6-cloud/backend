@@ -16,6 +16,7 @@ import { normalisePhone, maskPhone } from '../lib/phone.js';
 import { events } from '../lib/events.js';
 import { siteHost } from '../lib/site.js';
 import { originKnown } from '../lib/origins.js';
+import { authPassword, signInPassword } from '../lib/pin.js';
 /* Where a sign-in, confirmation or reset link sends the person back to.
    Several sites share this API, so it is the site the request came from
    (when it is one of ours), not one fixed address: otherwise somebody
@@ -35,11 +36,11 @@ const router = Router();
 
 /* The same rules the browser enforces. Checked again here because a
    client-side check is a convenience, not a control. */
+/* Four characters or more, a 4-digit PIN included. See lib/pin.js for
+   how a short one is stored. */
 const password = z.string()
-  .min(8, 'Use at least 8 characters')
-  .refine(v => /[a-z]/.test(v) && /[A-Z]/.test(v), 'Include an upper and a lower case letter')
-  .refine(v => /\d/.test(v), 'Include a number')
-  .refine(v => /[^A-Za-z0-9]/.test(v), 'Include a symbol');
+  .min(4, 'Use at least 4 characters')
+  .max(200);
 
 const email = z.string().trim().toLowerCase().email('That does not look like an email address');
 
@@ -60,7 +61,7 @@ router.post('/signup',
 
       const { data, error } = await anon.auth.signUp({
         email: mail,
-        password: pass,
+        password: authPassword(pass),
         options: {
           data: { full_name: name, country },
           emailRedirectTo: `${appUrlFor(req)}/login?confirmed=1`
@@ -119,9 +120,7 @@ router.post('/signup',
          Either way it is the server that finds out, not the customer. */
       let session = data.session;
       if (!session) {
-        const { data: signedIn } = await anon.auth.signInWithPassword({
-          email: mail, password: pass
-        });
+        const { data: signedIn } = await signInPassword(anon, mail, pass);
         if (signedIn?.session) session = signedIn.session;
       }
 
@@ -140,10 +139,7 @@ router.post('/login',
   validate(z.object({ email, password: z.string().min(1, 'Enter your password') })),
   async (req, res, next) => {
     try {
-      const { data, error } = await anon.auth.signInWithPassword({
-        email: req.body.email,
-        password: req.body.password
-      });
+      const { data, error } = await signInPassword(anon, req.body.email, req.body.password);
 
       /* One message for a wrong password and for an unknown address, so
          this endpoint cannot be used to discover who has an account. */
@@ -224,7 +220,7 @@ router.post('/reset-password',
       }
 
       const { error } = await admin.auth.admin.updateUserById(userData.user.id, {
-        password: req.body.password
+        password: authPassword(req.body.password)
       });
       if (error) throw new HttpError(400, 'reset_failed', error.message);
 
@@ -244,16 +240,13 @@ router.post('/change-password',
     try {
       /* Re-authenticate first. Without this, a stolen access token is
          enough to take the account over permanently. */
-      const { error: checkErr } = await anon.auth.signInWithPassword({
-        email: req.user.email,
-        password: req.body.currentPassword
-      });
+      const { error: checkErr } = await signInPassword(anon, req.user.email, req.body.currentPassword);
       if (checkErr) throw badRequest('Your current password is not right', {
         currentPassword: 'That is not your current password'
       });
 
       const { error } = await admin.auth.admin.updateUserById(req.user.id, {
-        password: req.body.password
+        password: authPassword(req.body.password)
       });
       if (error) throw new HttpError(400, 'update_failed', error.message);
 
@@ -494,9 +487,7 @@ router.post('/account/delete',
         if (!req.body.password) {
           throw badRequest('Enter your password to confirm', { password: 'Required' });
         }
-        const { error: pwError } = await anon.auth.signInWithPassword({
-          email: req.user.email, password: req.body.password
-        });
+        const { error: pwError } = await signInPassword(anon, req.user.email, req.body.password);
         if (pwError) throw badRequest('That password is not right', { password: 'Not right' });
       }
 
