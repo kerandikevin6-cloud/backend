@@ -31,14 +31,32 @@ import { siteHost } from '../lib/site.js';
 
 const router = Router();
 
-/* The rail collects shillings, and the limits are stated in shillings. */
+/* The rail collects shillings; most sites quote dollars. The limits are
+   checked in what actually arrives and stated in what the customer
+   typed: dollars, or shillings on a site that quotes shillings. */
+const usdOf = minor => (Number(minor) / 100 / env.USD_RATE_KES).toFixed(2);
+const kshOf = minor => Math.round(Number(minor) / 100).toLocaleString('en-US');
+const amountMinor = z.coerce.number().int();
 
-const ksh = minor => 'KSh ' + Math.round(Number(minor) / 100).toLocaleString('en-US');
-const amountMinor = z.coerce.number().int()
-  .refine(v => v >= env.MIN_DEPOSIT_MINOR,
-    `Minimum deposit is ${ksh(env.MIN_DEPOSIT_MINOR)}`)
-  .refine(v => v <= env.MAX_DEPOSIT_MINOR,
-    `Maximum deposit is ${ksh(env.MAX_DEPOSIT_MINOR)}`);
+/* The minimum depends on the site the deposit came from
+   (SITE_MIN_DEPOSIT_MINOR); the maximum is the same everywhere. */
+function depositLimits(req, res, next) {
+  const host = siteHost(req);
+  const min = (host && env.SITE_MIN_DEPOSIT_MINOR[host]) || env.MIN_DEPOSIT_MINOR;
+  const max = env.MAX_DEPOSIT_MINOR;
+  const inKsh = !!host && env.KSH_SITES.includes(host);
+  const say = minor => inKsh ? `KSh ${kshOf(minor)}` : `${usdOf(minor)} USD`;
+  const v = req.body.amountMinor;
+  if (v < min) {
+    const msg = `Minimum deposit is ${say(min)}`;
+    return next(badRequest(msg, { amountMinor: msg }));
+  }
+  if (v > max) {
+    const msg = `Maximum deposit is ${say(max)}`;
+    return next(badRequest(msg, { amountMinor: msg }));
+  }
+  next();
+}
 
 async function createPending({ userId, provider, amount_minor, currency, phone, prefix, site }) {
   const reference = newReference(prefix || (provider === 'payhero' ? 'MP' : 'CD'));
@@ -80,6 +98,7 @@ router.post('/mpesa',
     usePhoneOnFile: z.boolean().optional(),
     currency: z.string().length(3).default('KES')
   })),
+  depositLimits,
   async (req, res, next) => {
     let payment;
     try {
@@ -478,6 +497,7 @@ router.post('/card',
     amountMinor,
     currency: z.string().length(3).default('KES')
   })),
+  depositLimits,
   async (req, res, next) => {
     let payment;
     try {

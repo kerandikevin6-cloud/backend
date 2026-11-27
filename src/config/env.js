@@ -31,8 +31,15 @@ const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY ||
 /* ---------- product rules ----------
    Minor units (cents). 10000 = KES 100.00 */
 const RULES = {
-  /* The rails collect shillings, so this is shillings. */
-  MIN_DEPOSIT_MINOR: 30000,        /* KES 300 */
+  /* The rails collect shillings, so this is shillings: USD 5 at the rate
+     below. The customer types dollars and never sees this figure except
+     on the line that says what the phone will actually be debited. */
+  MIN_DEPOSIT_MINOR: 64500,        /* KES 645, i.e. USD 5 */
+  /* Sites with their own minimum, by host. Everyone else uses the one
+     above. TradeSwif quotes shillings and takes KSh 300. */
+  SITE_MIN_DEPOSIT_MINOR: { 'tradeswif.com': 30000 },
+  /* Sites whose deposit messages are stated in shillings, not dollars. */
+  KSH_SITES: ['tradeswif.com'],
   MAX_DEPOSIT_MINOR: 15000000,     /* KES 150,000 */
   /* Withdrawals are requested in USD cents, which is what the balance is
      held in and, now, what the whole product is quoted in. */
